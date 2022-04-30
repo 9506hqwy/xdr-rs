@@ -1,0 +1,997 @@
+use crate::error::Error;
+use crate::keyword;
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    character::complete::{
+        alpha1, alphanumeric1, digit1, hex_digit1, line_ending, multispace0, multispace1,
+        not_line_ending, oct_digit1, one_of,
+    },
+    combinator::{map, opt, recognize, verify},
+    multi::{many0, many1, separated_list1},
+    sequence::{delimited, pair, preceded, terminated, tuple},
+    IResult,
+};
+use std::convert::TryFrom;
+use std::str::FromStr;
+
+pub fn parse(input: &str) -> Result<Vec<Definition>, Error> {
+    let (rest, ret) = specification(input)?;
+    if !rest.is_empty() {
+        return Err(Error::TrailingData);
+    }
+    Ok(ret)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Assign {
+    pub identifier: String,
+    pub value: Value,
+}
+
+impl Assign {
+    fn value(identifier: &str, value: Value) -> Self {
+        Assign {
+            identifier: identifier.to_string(),
+            value,
+        }
+    }
+
+    pub fn constants<'a, T>(&'a self) -> Result<Option<T>, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        match &self.value {
+            Value::Constant(c) => {
+                let n = T::try_from(c).map_err(|_| Error::Parse(format!("{:?}", c)))?;
+                Ok(Some(n))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaseSpec {
+    pub values: Vec<Value>,
+    pub declaration: Declaration,
+}
+
+impl CaseSpec {
+    fn new(values: Vec<Value>, declaration: Declaration) -> Self {
+        CaseSpec {
+            values,
+            declaration,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Constant {
+    Decimal(String),
+    Hex(String),
+    Octal(String),
+}
+
+impl TryFrom<&Constant> for i32 {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: &Constant) -> Result<Self, Self::Error> {
+        match value {
+            Constant::Decimal(v) => i32::from_str(v),
+            Constant::Hex(v) => i32::from_str_radix(v, 16),
+            Constant::Octal(v) => i32::from_str_radix(v, 8),
+        }
+    }
+}
+
+impl TryFrom<&Constant> for u32 {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: &Constant) -> Result<Self, Self::Error> {
+        match value {
+            Constant::Decimal(v) => u32::from_str(v),
+            Constant::Hex(v) => u32::from_str_radix(v, 16),
+            Constant::Octal(v) => u32::from_str_radix(v, 8),
+        }
+    }
+}
+
+impl TryFrom<&Constant> for usize {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: &Constant) -> Result<Self, Self::Error> {
+        match value {
+            Constant::Decimal(v) => usize::from_str(v),
+            Constant::Hex(v) => usize::from_str_radix(v, 16),
+            Constant::Octal(v) => usize::from_str_radix(v, 8),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Declaration {
+    Variable(TypeSpecifier, String),
+    FixedArray(TypeSpecifier, String, Value),
+    VariableArray(TypeSpecifier, String, Option<Value>),
+    OpaqueFixedArray(String, Value),
+    OpaqueVariableArray(String, Option<Value>),
+    String(String, Option<Value>),
+    OptionVariable(TypeSpecifier, String),
+    Void,
+}
+
+impl Declaration {
+    fn fixed_array(type_specifier: TypeSpecifier, identifier: &str, value: Value) -> Self {
+        Declaration::FixedArray(type_specifier, identifier.to_string(), value)
+    }
+
+    fn opaque_fixed_array(identifier: &str, value: Value) -> Self {
+        Declaration::OpaqueFixedArray(identifier.to_string(), value)
+    }
+
+    fn opaque_variable_array(identifier: &str, value: Option<Value>) -> Self {
+        Declaration::OpaqueVariableArray(identifier.to_string(), value)
+    }
+
+    fn option_variable(type_specifier: TypeSpecifier, identifier: &str) -> Self {
+        Declaration::OptionVariable(type_specifier, identifier.to_string())
+    }
+
+    fn string(identifier: &str, value: Option<Value>) -> Self {
+        Declaration::String(identifier.to_string(), value)
+    }
+
+    fn variable(type_specifier: TypeSpecifier, identifier: &str) -> Self {
+        Declaration::Variable(type_specifier, identifier.to_string())
+    }
+
+    fn variable_array(
+        type_specifier: TypeSpecifier,
+        identifier: &str,
+        value: Option<Value>,
+    ) -> Self {
+        Declaration::VariableArray(type_specifier, identifier.to_string(), value)
+    }
+
+    fn void() -> Self {
+        Declaration::Void
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Definition {
+    Type(TypeDef),
+    Constant(Assign),
+    LineComment,
+}
+
+impl Definition {
+    fn type_def(def: TypeDef) -> Self {
+        Definition::Type(def)
+    }
+
+    fn constant_def(def: Assign) -> Self {
+        Definition::Constant(def)
+    }
+
+    fn linecomment_def() -> Self {
+        Definition::LineComment
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumTypeSpec {
+    pub body: Vec<Assign>,
+}
+
+impl EnumTypeSpec {
+    fn new(body: Vec<Assign>) -> Self {
+        EnumTypeSpec { body }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructTypeSpec {
+    pub body: Vec<Declaration>,
+}
+
+impl StructTypeSpec {
+    fn new(body: Vec<Declaration>) -> Self {
+        StructTypeSpec { body }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeDef {
+    Declaration(Declaration),
+    Enum(String, Vec<Assign>),
+    Struct(String, Vec<Declaration>),
+    Union(String, UnionBody),
+}
+
+impl TypeDef {
+    fn declaration_def(declaration: Declaration) -> Self {
+        TypeDef::Declaration(declaration)
+    }
+
+    fn enum_def(identifier: &str, assigns: Vec<Assign>) -> Self {
+        TypeDef::Enum(identifier.to_string(), assigns)
+    }
+
+    fn struct_def(identifier: &str, declarations: Vec<Declaration>) -> Self {
+        TypeDef::Struct(identifier.to_string(), declarations)
+    }
+
+    fn union_def(identifier: &str, body: UnionBody) -> Self {
+        TypeDef::Union(identifier.to_string(), body)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeSpecifier {
+    Int(bool),
+    Hyper(bool),
+    Float,
+    Double,
+    Quadruple,
+    Bool,
+    Enum(Box<EnumTypeSpec>),
+    Struct(Box<StructTypeSpec>),
+    Union(Box<UnionTypeSpec>),
+    Identifier(String),
+    // start (libvirt extenstion)
+    Char(bool),
+    Short(bool),
+    // end (libvirt extenstion)
+}
+
+impl TypeSpecifier {
+    fn enum_type(spec: EnumTypeSpec) -> Self {
+        TypeSpecifier::Enum(Box::new(spec))
+    }
+
+    fn identifier_type(identifier: &str) -> Self {
+        TypeSpecifier::Identifier(identifier.to_string())
+    }
+
+    fn struct_type(spec: StructTypeSpec) -> Self {
+        TypeSpecifier::Struct(Box::new(spec))
+    }
+
+    fn union_type(spec: UnionTypeSpec) -> Self {
+        TypeSpecifier::Union(Box::new(spec))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnionBody {
+    pub cond: Declaration,
+    pub specs: Vec<CaseSpec>,
+    pub default: Option<Declaration>,
+}
+
+impl UnionBody {
+    fn new(cond: Declaration, specs: Vec<CaseSpec>, default: Option<Declaration>) -> UnionBody {
+        UnionBody {
+            cond,
+            specs,
+            default,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnionTypeSpec {
+    pub body: UnionBody,
+}
+
+impl UnionTypeSpec {
+    fn new(body: UnionBody) -> Self {
+        UnionTypeSpec { body }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Constant(Constant),
+    Identifier(String),
+}
+
+impl Value {
+    fn constant(value: Constant) -> Self {
+        Value::Constant(value)
+    }
+
+    fn identifier(value: &str) -> Self {
+        Value::Identifier(value.to_string())
+    }
+}
+
+fn assign(input: &str) -> IResult<&str, Assign> {
+    map(
+        tuple((
+            identifier,
+            preceded(tuple((comment0, tag("="), comment0)), value),
+        )),
+        |(i, v)| Assign::value(i, v),
+    )(input)
+}
+
+fn case_spec(input: &str) -> IResult<&str, CaseSpec> {
+    map(
+        tuple((
+            many1(delimited(
+                tuple((comment0, tag("case"), comment0)),
+                value,
+                tuple((comment0, tag(":"), comment0)),
+            )),
+            terminated(declaration, tuple((comment0, tag(";")))),
+        )),
+        |(v, d)| CaseSpec::new(v, d),
+    )(input)
+}
+
+fn comment0(input: &str) -> IResult<&str, Option<Vec<&str>>> {
+    preceded(
+        multispace0,
+        opt(many1(terminated(
+            delimited(tag("/*"), take_until("*/"), tag("*/")),
+            multispace0,
+        ))),
+    )(input)
+}
+
+fn comment_line(input: &str) -> IResult<&str, &str> {
+    delimited(tag("%"), not_line_ending, line_ending)(input)
+}
+
+fn constant(input: &str) -> IResult<&str, Constant> {
+    alt((
+        decimal_nonzero,
+        hexadecimal,
+        octal,
+        map(tag("0"), |v: &str| Constant::Decimal(v.to_string())),
+    ))(input)
+}
+
+fn constant_def(input: &str) -> IResult<&str, Assign> {
+    preceded(
+        tuple((tag("const"), multispace1)),
+        terminated(assign, tuple((comment0, tag(";")))),
+    )(input)
+}
+
+fn decimal_nonzero(input: &str) -> IResult<&str, Constant> {
+    map(
+        recognize(tuple((opt(tag("-")), one_of("1234567879"), many0(digit1)))),
+        |v: &str| Constant::Decimal(v.to_string()),
+    )(input)
+}
+
+fn declaration(input: &str) -> IResult<&str, Declaration> {
+    // 優先度順に並べる。
+    alt((
+        map(tag("void"), |_| Declaration::void()),
+        map(
+            tuple((
+                preceded(tuple((tag("opaque"), multispace1)), identifier),
+                delimited(tag("["), value, tag("]")),
+            )),
+            |(i, v)| Declaration::opaque_fixed_array(i, v),
+        ),
+        map(
+            tuple((
+                preceded(tuple((tag("opaque"), multispace1)), identifier),
+                delimited(tag("<"), opt(value), tag(">")),
+            )),
+            |(i, v)| Declaration::opaque_variable_array(i, v),
+        ),
+        map(
+            tuple((
+                preceded(tuple((tag("string"), multispace1)), identifier),
+                delimited(tag("<"), opt(value), tag(">")),
+            )),
+            |(i, v)| Declaration::string(i, v),
+        ),
+        map(
+            tuple((
+                type_specifier,
+                preceded(multispace1, identifier),
+                delimited(tag("["), value, tag("]")),
+            )),
+            |(t, i, v)| Declaration::fixed_array(t, i, v),
+        ),
+        map(
+            tuple((
+                type_specifier,
+                preceded(multispace1, identifier),
+                delimited(tag("<"), opt(value), tag(">")),
+            )),
+            |(t, i, v)| Declaration::variable_array(t, i, v),
+        ),
+        map(
+            tuple((
+                type_specifier,
+                preceded(tuple((multispace0, tag("*"), multispace0)), identifier),
+            )),
+            |(t, i)| Declaration::option_variable(t, i),
+        ),
+        map(
+            tuple((type_specifier, preceded(multispace1, identifier))),
+            |(t, i)| Declaration::variable(t, i),
+        ),
+    ))(input)
+}
+
+fn definition(input: &str) -> IResult<&str, Definition> {
+    alt((
+        map(constant_def, Definition::constant_def),
+        map(type_def, Definition::type_def),
+        map(comment_line, |_| Definition::linecomment_def()),
+    ))(input)
+}
+
+fn enum_body(input: &str) -> IResult<&str, Vec<Assign>> {
+    delimited(
+        tuple((tag("{"), comment0)),
+        separated_list1(tuple((comment0, tag(","), comment0)), assign),
+        tuple((comment0, tag("}"))),
+    )(input)
+}
+
+fn enum_type_spec(input: &str) -> IResult<&str, EnumTypeSpec> {
+    map(
+        preceded(tuple((tag("enum"), multispace1)), enum_body),
+        EnumTypeSpec::new,
+    )(input)
+}
+
+fn hexadecimal(input: &str) -> IResult<&str, Constant> {
+    map(
+        preceded(tag("0x"), recognize(many1(hex_digit1))),
+        |v: &str| Constant::Hex(v.to_string()),
+    )(input)
+}
+
+fn identifier(input: &str) -> IResult<&str, &str> {
+    verify(
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        )),
+        |i| !keyword::xdr_reserved(i),
+    )(input)
+}
+
+fn octal(input: &str) -> IResult<&str, Constant> {
+    map(
+        preceded(tag("0"), recognize(many1(oct_digit1))),
+        |v: &str| Constant::Octal(v.to_string()),
+    )(input)
+}
+
+fn specification(input: &str) -> IResult<&str, Vec<Definition>> {
+    many0(delimited(comment0, definition, comment0))(input)
+}
+
+fn struct_body(input: &str) -> IResult<&str, Vec<Declaration>> {
+    delimited(
+        tuple((tag("{"), comment0)),
+        many1(terminated(
+            declaration,
+            tuple((comment0, tag(";"), comment0)),
+        )),
+        tuple((comment0, tag("}"))),
+    )(input)
+}
+
+fn struct_type_spec(input: &str) -> IResult<&str, StructTypeSpec> {
+    map(
+        preceded(tuple((tag("struct"), multispace1)), struct_body),
+        StructTypeSpec::new,
+    )(input)
+}
+
+fn type_def(input: &str) -> IResult<&str, TypeDef> {
+    alt((
+        map(
+            delimited(
+                tuple((tag("typedef"), multispace1)),
+                declaration,
+                tuple((comment0, tag(";"))),
+            ),
+            TypeDef::declaration_def,
+        ),
+        map(
+            delimited(
+                tuple((tag("enum"), multispace1)),
+                tuple((terminated(identifier, comment0), enum_body)),
+                tuple((comment0, tag(";"))),
+            ),
+            |(i, v)| TypeDef::enum_def(i, v),
+        ),
+        map(
+            delimited(
+                tuple((tag("struct"), multispace1)),
+                tuple((terminated(identifier, comment0), struct_body)),
+                tuple((comment0, tag(";"))),
+            ),
+            |(i, v)| TypeDef::struct_def(i, v),
+        ),
+        map(
+            delimited(
+                tuple((tag("union"), multispace1)),
+                tuple((terminated(identifier, comment0), union_body)),
+                tuple((comment0, tag(";"))),
+            ),
+            |(i, v)| TypeDef::union_def(i, v),
+        ),
+    ))(input)
+}
+
+fn type_specifier(input: &str) -> IResult<&str, TypeSpecifier> {
+    alt((
+        map(tuple((tag("unsigned"), multispace1, tag("int"))), |_| {
+            TypeSpecifier::Int(false)
+        }),
+        map(tag("int"), |_| TypeSpecifier::Int(true)),
+        map(tuple((tag("unsigned"), multispace1, tag("hyper"))), |_| {
+            TypeSpecifier::Hyper(false)
+        }),
+        map(tag("hyper"), |_| TypeSpecifier::Hyper(true)),
+        // start (libvirt extenstion)
+        map(tuple((tag("unsigned"), multispace1, tag("char"))), |_| {
+            TypeSpecifier::Char(false)
+        }),
+        map(tag("char"), |_| TypeSpecifier::Char(true)),
+        map(tuple((tag("unsigned"), multispace1, tag("short"))), |_| {
+            TypeSpecifier::Short(false)
+        }),
+        map(tag("short"), |_| TypeSpecifier::Short(true)),
+        map(tag("unsigned"), |_| TypeSpecifier::Int(false)),
+        // end (libvirt extenstion)
+        map(tag("float"), |_| TypeSpecifier::Float),
+        map(tag("double"), |_| TypeSpecifier::Double),
+        map(tag("quadruple"), |_| TypeSpecifier::Quadruple),
+        map(tag("bool"), |_| TypeSpecifier::Bool),
+        map(enum_type_spec, TypeSpecifier::enum_type),
+        map(struct_type_spec, TypeSpecifier::struct_type),
+        map(union_type_spec, TypeSpecifier::union_type),
+        map(identifier, TypeSpecifier::identifier_type),
+    ))(input)
+}
+
+fn union_body(input: &str) -> IResult<&str, UnionBody> {
+    map(
+        tuple((
+            delimited(
+                tuple((tag("switch"), comment0, tag("("), comment0)),
+                declaration,
+                tuple((comment0, tag(")"), comment0, tag("{"), comment0)),
+            ),
+            many1(terminated(case_spec, comment0)),
+            terminated(
+                opt(delimited(
+                    tuple((comment0, tag("default"), comment0, tag(":"), comment0)),
+                    declaration,
+                    tuple((comment0, tag(";"))),
+                )),
+                tuple((comment0, tag("}"))),
+            ),
+        )),
+        |(c, s, d)| UnionBody::new(c, s, d),
+    )(input)
+}
+
+fn union_type_spec(input: &str) -> IResult<&str, UnionTypeSpec> {
+    map(
+        preceded(tuple((tag("union"), multispace1)), union_body),
+        UnionTypeSpec::new,
+    )(input)
+}
+
+fn value(input: &str) -> IResult<&str, Value> {
+    alt((
+        map(constant, Value::constant),
+        map(identifier, Value::identifier),
+    ))(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assign_ok() {
+        let (rest, ret) = assign("a = b").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Assign::value("a", Value::identifier("b")), ret);
+    }
+
+    #[test]
+    fn case_spec_ok() {
+        let (rest, ret) = case_spec(
+            "case A:
+case B:
+void;",
+        )
+        .unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            CaseSpec::new(
+                vec![Value::identifier("A"), Value::identifier("B")],
+                Declaration::void()
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn commnet0_0_ok() {
+        let (rest, ret) = comment0("").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(None, ret);
+    }
+
+    #[test]
+    fn commnet0_1_ok() {
+        let (rest, ret) = comment0("/* a */").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Some(vec![" a "]), ret);
+    }
+
+    #[test]
+    fn commnet0_2_ok() {
+        let (rest, ret) = comment0("/* a */ /* b */").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Some(vec![" a ", " b "]), ret);
+    }
+
+    #[test]
+    fn commnet_line_ok() {
+        let (rest, ret) = comment_line(
+            "%a
+",
+        )
+        .unwrap();
+        assert_eq!("", rest);
+        assert_eq!("a", ret);
+    }
+
+    #[test]
+    fn constant_ok_decimal_minus() {
+        let (rest, ret) = constant("-1").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Constant::Decimal("-1".to_string()), ret);
+    }
+
+    #[test]
+    fn constant_ok_decimal_plus() {
+        let (rest, ret) = constant("1").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Constant::Decimal("1".to_string()), ret);
+    }
+
+    #[test]
+    fn constant_ok_hex() {
+        let (rest, ret) = constant("0x0102").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Constant::Hex("0102".to_string()), ret);
+    }
+
+    #[test]
+    fn constant_ok_oct() {
+        let (rest, ret) = constant("0102").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Constant::Octal("102".to_string()), ret);
+    }
+
+    #[test]
+    fn constant_def_ok() {
+        let (rest, ret) = constant_def("const a = 1;").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Assign::value("a", Value::constant(Constant::Decimal("1".to_string()))),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_variable() {
+        let (rest, ret) = declaration("bool a").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Declaration::variable(TypeSpecifier::Bool, "a"), ret);
+    }
+
+    #[test]
+    fn declaration_fixed_array() {
+        let (rest, ret) = declaration("bool a[2]").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Declaration::fixed_array(
+                TypeSpecifier::Bool,
+                "a",
+                Value::constant(Constant::Decimal("2".to_string()))
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_variable_array() {
+        let (rest, ret) = declaration("bool a<2>").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Declaration::variable_array(
+                TypeSpecifier::Bool,
+                "a",
+                Some(Value::constant(Constant::Decimal("2".to_string())))
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_opaque_fixed_array() {
+        let (rest, ret) = declaration("opaque a[2]").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Declaration::opaque_fixed_array(
+                "a",
+                Value::constant(Constant::Decimal("2".to_string()))
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_opaque_variable_array() {
+        let (rest, ret) = declaration("opaque a<2>").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Declaration::opaque_variable_array(
+                "a",
+                Some(Value::constant(Constant::Decimal("2".to_string())))
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_string() {
+        let (rest, ret) = declaration("string a<2>").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Declaration::string(
+                "a",
+                Some(Value::constant(Constant::Decimal("2".to_string())))
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn declaration_option_variable() {
+        let (rest, ret) = declaration("bool *a").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Declaration::option_variable(TypeSpecifier::Bool, "a"), ret);
+    }
+
+    #[test]
+    fn declaration_void() {
+        let (rest, ret) = declaration("void").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Declaration::void(), ret);
+    }
+
+    #[test]
+    fn definition_constant() {
+        let (rest, ret) = definition("const a = 1;").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Definition::constant_def(Assign::value(
+                "a",
+                Value::constant(Constant::Decimal("1".to_string()))
+            )),
+            ret
+        );
+    }
+
+    #[test]
+    fn definition_typdef() {
+        let (rest, ret) = definition("typedef void;").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Definition::type_def(TypeDef::declaration_def(Declaration::void())),
+            ret
+        );
+    }
+
+    #[test]
+    fn enum_type_spec_1_ok() {
+        let (rest, ret) = enum_type_spec("enum { a = 1 }").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            EnumTypeSpec::new(vec![Assign::value(
+                "a",
+                Value::constant(Constant::Decimal("1".to_string()))
+            ),]),
+            ret
+        );
+    }
+
+    #[test]
+    fn enum_type_spec_2_ok() {
+        let (rest, ret) = enum_type_spec("enum { a = 1, b = 2}").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            EnumTypeSpec::new(vec![
+                Assign::value("a", Value::constant(Constant::Decimal("1".to_string()))),
+                Assign::value("b", Value::constant(Constant::Decimal("2".to_string())))
+            ]),
+            ret
+        );
+    }
+
+    #[test]
+    fn identifier_err() {
+        let err = identifier("1a").err().is_some();
+        assert_eq!(true, err);
+    }
+
+    #[test]
+    fn identifier_ok() {
+        let (rest, ret) = identifier("a1_1").unwrap();
+        assert_eq!("", rest);
+        assert_eq!("a1_1", ret);
+    }
+
+    #[test]
+    fn struct_type_spec_ok() {
+        let (rest, ret) = struct_type_spec("struct { void; }").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(StructTypeSpec::new(vec![Declaration::void()]), ret);
+    }
+
+    #[test]
+    fn type_def_declaration() {
+        let (rest, ret) = type_def("typedef void;").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeDef::declaration_def(Declaration::void()), ret);
+    }
+
+    #[test]
+    fn type_def_enum() {
+        let (rest, ret) = type_def("enum a { b = 0  };").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            TypeDef::enum_def(
+                "a",
+                vec![Assign::value(
+                    "b",
+                    Value::constant(Constant::Decimal("0".to_string()))
+                )]
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn type_def_struct() {
+        let (rest, ret) = type_def("struct a { void; };").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeDef::struct_def("a", vec![Declaration::void()]), ret);
+    }
+
+    #[test]
+    fn type_def_union() {
+        let (rest, ret) = type_def("union a switch (void) { case b : void; };").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            TypeDef::union_def(
+                "a",
+                UnionBody::new(
+                    Declaration::void(),
+                    vec![CaseSpec::new(
+                        vec![Value::identifier("b")],
+                        Declaration::void()
+                    )],
+                    None
+                )
+            ),
+            ret
+        );
+    }
+
+    #[test]
+    fn type_specifier_unsigned_int() {
+        let (rest, ret) = type_specifier("unsigned int").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_int() {
+        let (rest, ret) = type_specifier("int").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Int(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_hyper() {
+        let (rest, ret) = type_specifier("unsigned hyper").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Hyper(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_hyper() {
+        let (rest, ret) = type_specifier("hyper").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Hyper(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_char() {
+        let (rest, ret) = type_specifier("unsigned char").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Char(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_char() {
+        let (rest, ret) = type_specifier("char").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Char(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_short() {
+        let (rest, ret) = type_specifier("unsigned short").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Short(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_short() {
+        let (rest, ret) = type_specifier("short").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Short(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned() {
+        let (rest, ret) = type_specifier("unsigned").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_float() {
+        let (rest, ret) = type_specifier("float").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Float, ret);
+    }
+
+    #[test]
+    fn type_specifier_double() {
+        let (rest, ret) = type_specifier("double").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(TypeSpecifier::Double, ret);
+    }
+
+    #[test]
+    fn value_constant_ok() {
+        let (rest, ret) = value("0").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Value::constant(Constant::Decimal("0".to_string())), ret);
+    }
+
+    #[test]
+    fn value_identifier_ok() {
+        let (rest, ret) = value("a").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(Value::identifier("a"), ret);
+    }
+}

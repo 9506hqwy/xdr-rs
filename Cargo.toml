@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "rpcgen",
+    "serde-xdr",
+]
+
+[profile.release]
+strip = "symbols"
+lto = true
