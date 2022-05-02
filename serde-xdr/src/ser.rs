@@ -91,7 +91,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         let padding_size = 4 - size % 4;
         self.serialize_u32(size as u32)?;
         self.output.extend_from_slice(v);
-        if padding_size > 0 {
+        if padding_size < 4 {
             let mut padding = vec![0u8; padding_size];
             self.output.append(&mut padding);
         }

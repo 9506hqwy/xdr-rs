@@ -204,6 +204,10 @@ mod de_tests {
         let v = [0x00, 0x00, 0x00, 0x03, 0xE3, 0x81, 0x82, 0x00];
         let ret: String = from_bytes(&v).unwrap();
         assert_eq!("あ".to_string(), ret);
+
+        let v = [0x00, 0x00, 0x00, 0x04, 0x61, 0x62, 0x63, 0x64];
+        let ret: String = from_bytes(&v).unwrap();
+        assert_eq!("abcd".to_string(), ret);
     }
 
     #[test]
@@ -494,6 +498,9 @@ mod ser_tests {
 
         let ret = to_bytes(&"あ").unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x03, 0xE3, 0x81, 0x82, 0x00], ret);
+
+        let ret = to_bytes(&"abcd").unwrap();
+        assert_eq!(vec![0x00, 0x00, 0x00, 0x04, 0x61, 0x62, 0x63, 0x64], ret);
     }
 
     #[test]
