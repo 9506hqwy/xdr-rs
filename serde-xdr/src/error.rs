@@ -13,7 +13,7 @@ pub enum Error {
     NotEnoughData(usize),
     NotImplemented,
     NotSupported,
-    TrailingData,
+    TrailingData(usize),
 }
 
 impl fmt::Display for Error {

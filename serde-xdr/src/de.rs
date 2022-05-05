@@ -32,7 +32,7 @@ where
     if deserializer.input.is_empty() {
         Ok(t)
     } else {
-        Err(Error::TrailingData)
+        Err(Error::TrailingData(deserializer.input.len()))
     }
 }
 
@@ -362,6 +362,10 @@ impl<'a, 'de> de::SeqAccess<'de> for Seq<'a, 'de> {
 
         self.count -= 1;
         seed.deserialize(&mut *self.de).map(Some)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.count)
     }
 }
 

@@ -16,7 +16,7 @@ pub struct Config {
 struct Context {
     config: Config,
     constants: HashMap<String, u32>,
-    typedefs: HashMap<String, TokenStream>,
+    typedefs: HashMap<String, (TokenStream, OpaqueType)>,
 }
 
 impl Context {
@@ -27,6 +27,13 @@ impl Context {
             typedefs: HashMap::new(),
         }
     }
+}
+
+#[derive(Clone, PartialEq)]
+enum OpaqueType {
+    None,
+    Fixed,
+    Variable,
 }
 
 pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Error> {
@@ -75,9 +82,9 @@ fn types(definitions: &[Definition], cxt: &mut Context) -> Result<Vec<TokenStrea
 
     for definition in definitions {
         if let Definition::Type(TypeDef::Declaration(declaration)) = definition {
-            let (name, value) =
+            let (name, value, opaque) =
                 convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
-            cxt.typedefs.insert(name.to_string(), value);
+            cxt.typedefs.insert(name.to_string(), (value, opaque));
         }
     }
 
@@ -86,8 +93,12 @@ fn types(definitions: &[Definition], cxt: &mut Context) -> Result<Vec<TokenStrea
             match type_def {
                 TypeDef::Declaration(declaration) => {
                     if !cxt.config.remove_typedef {
-                        let (name, value) =
+                        let (name, value, opaque) =
                             convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
+                        if opaque != OpaqueType::None {
+                            return Err(Error::NotSupported);
+                        }
+
                         let name = upper_camel_case_ident(&name.to_string());
                         results.push(quote! {
                             type #name = #value;
@@ -166,41 +177,45 @@ fn convert_enum(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenSt
 fn convert_declaration(
     declaration: &Declaration,
     cxt: &Context,
-) -> Result<Option<(Ident, TokenStream)>, Error> {
+) -> Result<Option<(Ident, TokenStream, OpaqueType)>, Error> {
     match declaration {
         Declaration::Variable(type_specifier, name) => {
             let name = format_ident!("{}", name);
-            let ty = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, ty)))
+            let (ty, opaque) = convert_type(type_specifier, cxt)?;
+            Ok(Some((name, ty, opaque)))
         }
         Declaration::FixedArray(type_specifier, name, value) => {
             let name = format_ident!("{}", name);
-            let ty = convert_type(type_specifier, cxt)?;
+            let (ty, opaque) = convert_type(type_specifier, cxt)?;
             let len = convert_value::<usize>(value)?;
-            Ok(Some((name, quote! { [#ty; #len] })))
+            Ok(Some((name, quote! { [#ty; #len] }, opaque)))
         }
         Declaration::VariableArray(type_specifier, name, _) => {
             let name = format_ident!("{}", name);
-            let ty = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, quote! { Vec<#ty> })))
+            let (ty, opaque) = convert_type(type_specifier, cxt)?;
+            Ok(Some((name, quote! { Vec<#ty> }, opaque)))
         }
         Declaration::OpaqueFixedArray(name, value) => {
             let name = format_ident!("{}", name);
             let len = convert_value::<usize>(value)?;
-            Ok(Some((name, quote! { [u8; #len as usize] })))
+            Ok(Some((
+                name,
+                quote! { [u8; #len as usize] },
+                OpaqueType::Fixed,
+            )))
         }
         Declaration::OpaqueVariableArray(name, _) => {
             let name = format_ident!("{}", name);
-            Ok(Some((name, quote! { Vec<u8> })))
+            Ok(Some((name, quote! { Vec<u8> }, OpaqueType::Variable)))
         }
         Declaration::String(name, _) => {
             let name = format_ident!("{}", name);
-            Ok(Some((name, quote! { String })))
+            Ok(Some((name, quote! { String }, OpaqueType::None)))
         }
         Declaration::OptionVariable(type_specifier, name) => {
             let name = format_ident!("{}", name);
-            let ty = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, quote! { Option<#ty> })))
+            let (ty, opaque) = convert_type(type_specifier, cxt)?;
+            Ok(Some((name, quote! { Option<#ty> }, opaque)))
         }
         Declaration::Void => Ok(None),
     }
@@ -214,8 +229,14 @@ fn convert_struct(
     let mut fields = vec![];
 
     for declaration in declarations {
-        let (mut f_name, f_ty) =
+        let (mut f_name, f_ty, opaque) =
             convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
+
+        let derive = match opaque {
+            OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
+            OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
+            _ => quote! {},
+        };
 
         if keyword::rust_reserved(&format!("{}", f_name)) {
             f_name = format_ident!("r#{}", f_name);
@@ -223,7 +244,10 @@ fn convert_struct(
 
         let f_name = snake_case_ident(&f_name.to_string());
 
-        fields.push(quote! { pub #f_name: #f_ty });
+        fields.push(quote! {
+            #derive
+            pub #f_name: #f_ty
+        });
     }
 
     let name = upper_camel_case_ident(name);
@@ -235,38 +259,41 @@ fn convert_struct(
     })
 }
 
-fn convert_type(specifier: &TypeSpecifier, cxt: &Context) -> Result<TokenStream, Error> {
+fn convert_type(
+    specifier: &TypeSpecifier,
+    cxt: &Context,
+) -> Result<(TokenStream, OpaqueType), Error> {
     match specifier {
         TypeSpecifier::Int(signed) => Ok(if *signed {
-            quote! { i32 }
+            (quote! { i32 }, OpaqueType::None)
         } else {
-            quote! { u32 }
+            (quote! { u32 }, OpaqueType::None)
         }),
         TypeSpecifier::Hyper(signed) => Ok(if *signed {
-            quote! { i64 }
+            (quote! { i64 }, OpaqueType::None)
         } else {
-            quote! { u64 }
+            (quote! { u64 }, OpaqueType::None)
         }),
-        TypeSpecifier::Float => Ok(quote! { f32 }),
-        TypeSpecifier::Double => Ok(quote! { f64 }),
+        TypeSpecifier::Float => Ok((quote! { f32 }, OpaqueType::None)),
+        TypeSpecifier::Double => Ok((quote! { f64 }, OpaqueType::None)),
         TypeSpecifier::Quadruple => Err(Error::NotSupported),
-        TypeSpecifier::Bool => Ok(quote! { bool }),
+        TypeSpecifier::Bool => Ok((quote! { bool }, OpaqueType::None)),
         TypeSpecifier::Enum(_) => Err(Error::NotSupported),
         TypeSpecifier::Struct(_) => Err(Error::NotSupported),
         TypeSpecifier::Union(_) => Err(Error::NotSupported),
         TypeSpecifier::Identifier(id) => {
-            let id = resolve_type(id, cxt)?;
-            Ok(quote! { #id })
+            let (id, opaque) = resolve_type(id, cxt)?;
+            Ok((quote! { #id }, opaque))
         }
         TypeSpecifier::Char(signed) => Ok(if *signed {
-            quote! { i8 }
+            (quote! { i8 }, OpaqueType::None)
         } else {
-            quote! { u8 }
+            (quote! { u8 }, OpaqueType::None)
         }),
         TypeSpecifier::Short(signed) => Ok(if *signed {
-            quote! { i16 }
+            (quote! { i16 }, OpaqueType::None)
         } else {
-            quote! { u16 }
+            (quote! { u16 }, OpaqueType::None)
         }),
     }
 }
@@ -307,7 +334,11 @@ fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<Toke
 
                     let value = convert_value::<u32>(value)?;
                     let value = upper_camel_case_ident(&value.to_string());
-                    if let Some((_, v_ty)) = &decl {
+                    if let Some((_, v_ty, opaque)) = &decl {
+                        if *opaque != OpaqueType::None {
+                            return Err(Error::NotSupported);
+                        }
+
                         specs.push(quote! {
                             #value(#v_ty)
                         });
@@ -326,7 +357,7 @@ fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<Toke
     }
 
     if let Some(default) = &body.default {
-        if let Some((_, v_ty)) = convert_declaration(default, cxt)? {
+        if let Some((_, v_ty, _)) = convert_declaration(default, cxt)? {
             specs.push(quote! {
                 Default(#v_ty)
             });
@@ -362,20 +393,20 @@ where
     }
 }
 
-fn resolve_type(value: &str, cxt: &Context) -> Result<TokenStream, Error> {
+fn resolve_type(value: &str, cxt: &Context) -> Result<(TokenStream, OpaqueType), Error> {
     if !cxt.config.remove_typedef {
         let name = upper_camel_case_ident(value);
-        return Ok(quote! { #name });
+        return Ok((quote! { #name }, OpaqueType::None));
     }
 
-    for (d_name, d_value) in cxt.typedefs.iter() {
+    for (d_name, (d_value, opaque)) in cxt.typedefs.iter() {
         if value == d_name {
-            return Ok(quote! { #d_value });
+            return Ok((quote! { #d_value }, opaque.clone()));
         }
     }
 
     let name = upper_camel_case_ident(value);
-    Ok(quote! { #name })
+    Ok((quote! { #name }, OpaqueType::None))
 }
 
 fn upper_camel_case(value: &str) -> String {

@@ -1,4 +1,5 @@
 pub mod error;
+pub mod opaque;
 
 mod de;
 mod ser;
@@ -45,6 +46,23 @@ mod de_tests {
     #[derive(Debug, Deserialize, PartialEq)]
     enum StructVariant {
         A { a: u8, b: u8 },
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct ArrayStruct {
+        a: [u8; 2],
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct FixedOpaqueStruct {
+        #[serde(with = "opaque::fixed")]
+        a: [u8; 2],
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct VariableOpaqueStruct {
+        #[serde(with = "opaque::variable")]
+        a: Vec<u8>,
     }
 
     #[test]
@@ -322,6 +340,27 @@ mod de_tests {
         let ret: StructVariant = from_bytes(&v).unwrap();
         assert_eq!(StructVariant::A { a: 1, b: 2 }, ret);
     }
+
+    #[test]
+    fn from_bytes_array_struct() {
+        let v = [0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
+        let ret: ArrayStruct = from_bytes(&v).unwrap();
+        assert_eq!(ArrayStruct { a: [1, 2] }, ret);
+    }
+
+    #[test]
+    fn from_bytes_fixed_opaque_struct() {
+        let v = [0x01, 0x02, 0x00, 0x00];
+        let ret: FixedOpaqueStruct = from_bytes(&v).unwrap();
+        assert_eq!(FixedOpaqueStruct { a: [1, 2] }, ret);
+    }
+
+    #[test]
+    fn from_bytes_variable_opaque_struct() {
+        let v = [0x00, 0x00, 0x00, 0x02, 0x01, 0x02, 0x00, 0x00];
+        let ret: VariableOpaqueStruct = from_bytes(&v).unwrap();
+        assert_eq!(VariableOpaqueStruct { a: vec![1, 2] }, ret);
+    }
 }
 
 #[cfg(test)]
@@ -367,8 +406,19 @@ mod ser_tests {
     }
 
     #[derive(Serialize)]
-    struct SliceStruct {
+    struct ArrayStruct {
         a: [u8; 2],
+    }
+
+    #[derive(Serialize)]
+    struct FixedOpaqueStruct {
+        #[serde(with = "opaque::fixed")]
+        a: [u8; 2],
+    }
+    #[derive(Serialize)]
+    struct VariableOpaqueStruct {
+        #[serde(with = "opaque::variable")]
+        a: Vec<u8>,
     }
 
     #[test]
@@ -625,9 +675,23 @@ mod ser_tests {
     }
 
     #[test]
-    fn to_bytes_slice_struct() {
-        let v = SliceStruct { a: [1, 2] };
+    fn to_bytes_array_struct() {
+        let v = ArrayStruct { a: [1, 2] };
         let ret = to_bytes(&v).unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02], ret);
+    }
+
+    #[test]
+    fn to_bytes_fixed_opaque_struct() {
+        let v = FixedOpaqueStruct { a: [1, 2] };
+        let ret = to_bytes(&v).unwrap();
+        assert_eq!(vec![0x01, 0x02, 0x00, 0x00], ret);
+    }
+
+    #[test]
+    fn to_bytes_variable_opaque_struct() {
+        let v = VariableOpaqueStruct { a: vec![1, 2] };
+        let ret = to_bytes(&v).unwrap();
+        assert_eq!(vec![0x00, 0x00, 0x00, 0x02, 0x01, 0x02, 0x00, 0x00], ret);
     }
 }
