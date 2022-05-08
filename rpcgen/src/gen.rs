@@ -132,6 +132,7 @@ where
 
 fn convert_enum(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenStream, Error> {
     let mut values = vec![];
+    let mut default_value = None;
 
     let mut sindex: i32 = 0;
     for assign in assigns {
@@ -161,15 +162,26 @@ fn convert_enum(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenSt
             #e_name = #e_value
         });
 
+        if default_value.is_none() {
+            default_value = Some(quote! { #e_name });
+        }
+
         sindex = eindex + 1;
     }
 
     let name = upper_camel_case_ident(name);
+    let default_value = default_value.unwrap();
     Ok(quote! {
         #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
         #[repr(i32)]
         pub enum #name {
             #(#values),*
+        }
+
+        impl Default for #name {
+            fn default() -> Self {
+                #name::#default_value
+            }
         }
     })
 }
@@ -252,7 +264,7 @@ fn convert_struct(
 
     let name = upper_camel_case_ident(name);
     Ok(quote! {
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, Default, Deserialize, Serialize)]
         pub struct #name {
             #(#fields),*
         }
@@ -300,6 +312,7 @@ fn convert_type(
 
 fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<TokenStream, Error> {
     let mut specs = vec![];
+    let mut default_value = None;
 
     let cond_type = if let Declaration::Variable(cond_type, _) = &body.cond {
         Ok(cond_type)
@@ -342,10 +355,18 @@ fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<Toke
                         specs.push(quote! {
                             #value(#v_ty)
                         });
+
+                        if default_value.is_none() {
+                            default_value = Some(quote! { #value(#v_ty::default()) });
+                        }
                     } else {
                         specs.push(quote! {
                             #value
                         });
+
+                        if default_value.is_none() {
+                            default_value = Some(quote! { #value });
+                        }
                     }
 
                     sindex = eindex + 1;
@@ -361,18 +382,29 @@ fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<Toke
             specs.push(quote! {
                 Default(#v_ty)
             });
+
+            default_value = Some(quote! { Default(#v_ty::default()) });
         } else {
             specs.push(quote! {
                 Default
             });
+
+            default_value = Some(quote! { Default });
         }
     }
 
     let name = upper_camel_case_ident(name);
+    let default_value = default_value.unwrap();
     Ok(quote! {
         #[derive(Clone, Debug, Deserialize, Serialize)]
         pub enum #name {
             #(#specs),*
+        }
+
+        impl Default for #name {
+            fn default() -> Self {
+                #name::#default_value
+            }
         }
     })
 }
