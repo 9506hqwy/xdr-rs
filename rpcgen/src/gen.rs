@@ -410,13 +410,24 @@ fn resolve_type(value: &str, cxt: &Context) -> Result<(TokenStream, OpaqueType),
 }
 
 fn upper_camel_case(value: &str) -> String {
-    value
-        .split('_')
-        .map(capitalize)
-        .fold("".to_string(), |mut acc, x| {
-            acc.push_str(&x);
-            acc
-        })
+    if value.contains('_') {
+        value
+            .split('_')
+            .map(capitalize)
+            .fold("".to_string(), |mut acc, x| {
+                acc.push_str(&x);
+                acc
+            })
+    } else {
+        value
+            .chars()
+            .enumerate()
+            .map(|(index, c)| match index {
+                0 => c.to_ascii_uppercase(),
+                _ => c,
+            })
+            .collect()
+    }
 }
 
 fn upper_camel_case_ident(value: &str) -> Ident {
@@ -436,7 +447,7 @@ fn capitalize(value: &str) -> String {
 
 fn snake_case(value: &str) -> String {
     let capitalized = value
-        .split_inclusive(char::is_lowercase)
+        .split_inclusive(|c| char::is_lowercase(c) || char::is_numeric(c))
         .map(|c| {
             match c.len() {
                 1 => c.to_string(),
@@ -480,4 +491,57 @@ fn with_underscore(value: &str) -> String {
     let mut v = "_".to_string();
     v.push_str(&value.to_ascii_lowercase());
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upper_camel_case_to_upper_camel_case() {
+        let r = upper_camel_case("AbCd");
+        assert_eq!("AbCd", r)
+    }
+
+    #[test]
+    fn lower_camel_case_to_upper_camel_case() {
+        let r = upper_camel_case("abCd");
+        assert_eq!("AbCd", r)
+    }
+
+    #[test]
+    fn snake_case_to_upper_camel_case() {
+        let r = upper_camel_case("ab_cd");
+        assert_eq!("AbCd", r)
+    }
+
+    #[test]
+    fn upper_snake_case_to_upper_camel_case() {
+        let r = upper_camel_case("AB_CD");
+        assert_eq!("AbCd", r)
+    }
+
+    #[test]
+    fn upper_camel_case_to_snake_case() {
+        let r = snake_case("AbCd");
+        assert_eq!("ab_cd", r)
+    }
+
+    #[test]
+    fn lower_camel_case_to_snake_case() {
+        let r = snake_case("abCd");
+        assert_eq!("ab_cd", r)
+    }
+
+    #[test]
+    fn snake_case_to_snake_case() {
+        let r = snake_case("ab_cd");
+        assert_eq!("ab_cd", r)
+    }
+
+    #[test]
+    fn upper_camel_case_to_snake_case_with_num() {
+        let r = snake_case("Ab2Cd");
+        assert_eq!("ab2_cd", r)
+    }
 }
