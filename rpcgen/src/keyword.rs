@@ -26,6 +26,10 @@ const KEYWORDS_XDR: &[&str] = &[
     "union",
     "unsigned",
     "void",
+    // start (rpcl extension)
+    "program",
+    "version",
+    // end (rpcl extension)
 ];
 
 pub fn rust_reserved(keyword: &str) -> bool {

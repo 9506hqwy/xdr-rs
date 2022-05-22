@@ -307,6 +307,7 @@ fn convert_type(
         } else {
             (quote! { u16 }, OpaqueType::None)
         }),
+        TypeSpecifier::Void => unimplemented!(),
     }
 }
 

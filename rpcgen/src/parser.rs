@@ -164,6 +164,9 @@ pub enum Definition {
     Type(TypeDef),
     Constant(Assign),
     LineComment,
+    // start (rpcl extension)
+    Program(Program),
+    // end (rpcl extension)
 }
 
 impl Definition {
@@ -177,6 +180,10 @@ impl Definition {
 
     fn linecomment_def() -> Self {
         Definition::LineComment
+    }
+
+    fn program(prog: Program) -> Self {
+        Definition::Program(prog)
     }
 }
 
@@ -244,6 +251,9 @@ pub enum TypeSpecifier {
     Char(bool),
     Short(bool),
     // end (libvirt extenstion)
+    // start (rpcl extension)
+    Void,
+    // end (rpcl extension)
 }
 
 impl TypeSpecifier {
@@ -305,6 +315,59 @@ impl Value {
 
     fn identifier(value: &str) -> Self {
         Value::Identifier(value.to_string())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Program {
+    pub name: String,
+    pub versions: Vec<Version>,
+    pub value: Value,
+}
+
+impl Program {
+    fn new(name: &str, versions: Vec<Version>, value: Value) -> Self {
+        Program {
+            name: name.to_string(),
+            versions,
+            value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Version {
+    pub name: String,
+    pub procedures: Vec<Procedure>,
+    pub value: Value,
+}
+
+impl Version {
+    fn new(name: &str, procedures: Vec<Procedure>, value: Value) -> Self {
+        Version {
+            name: name.to_string(),
+            procedures,
+            value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Procedure {
+    pub res_ty: TypeSpecifier,
+    pub method: String,
+    pub req_ty: TypeSpecifier,
+    pub value: Value,
+}
+
+impl Procedure {
+    fn new(res_ty: TypeSpecifier, method: &str, req_ty: TypeSpecifier, value: Value) -> Self {
+        Procedure {
+            res_ty,
+            method: method.to_string(),
+            req_ty,
+            value,
+        }
     }
 }
 
@@ -428,6 +491,7 @@ fn definition(input: &str) -> IResult<&str, Definition> {
     alt((
         map(constant_def, Definition::constant_def),
         map(type_def, Definition::type_def),
+        map(program, Definition::program),
         map(comment_line, |_| Definition::linecomment_def()),
     ))(input)
 }
@@ -634,6 +698,67 @@ fn value(input: &str) -> IResult<&str, Value> {
         map(constant, Value::constant),
         map(identifier, Value::identifier),
     ))(input)
+}
+
+fn program(input: &str) -> IResult<&str, Program> {
+    map(
+        tuple((
+            preceded(tuple((tag("program"), multispace1)), identifier),
+            delimited(
+                tuple((multispace0, tag("{"), multispace0)),
+                many1(version),
+                tuple((multispace0, tag("}"), multispace0)),
+            ),
+            delimited(
+                tuple((tag("="), multispace0)),
+                value,
+                tuple((multispace0, tag(";"))),
+            ),
+        )),
+        |(a, b, c)| Program::new(a, b, c),
+    )(input)
+}
+
+fn version(input: &str) -> IResult<&str, Version> {
+    map(
+        tuple((
+            preceded(tuple((tag("version"), multispace1)), identifier),
+            delimited(
+                tuple((multispace0, tag("{"), multispace0)),
+                many1(terminated(procedure, multispace0)),
+                tuple((multispace0, tag("}"), multispace0)),
+            ),
+            delimited(
+                tuple((tag("="), multispace0)),
+                value,
+                tuple((multispace0, tag(";"))),
+            ),
+        )),
+        |(a, b, c)| Version::new(a, b, c),
+    )(input)
+}
+
+fn procedure(input: &str) -> IResult<&str, Procedure> {
+    map(
+        tuple((
+            terminated(
+                alt((type_specifier, map(tag("void"), |_| TypeSpecifier::Void))),
+                multispace1,
+            ),
+            identifier,
+            delimited(
+                tuple((multispace0, tag("("), multispace0)),
+                alt((type_specifier, map(tag("void"), |_| TypeSpecifier::Void))),
+                tuple((multispace0, tag(")"), multispace0)),
+            ),
+            delimited(
+                tuple((tag("="), multispace0)),
+                value,
+                tuple((multispace0, tag(";"))),
+            ),
+        )),
+        |(a, b, c, d)| Procedure::new(a, b, c, d),
+    )(input)
 }
 
 #[cfg(test)]
@@ -1108,5 +1233,48 @@ void;",
         let (rest, ret) = value("a").unwrap();
         assert_eq!("", rest);
         assert_eq!(Value::identifier("a"), ret);
+    }
+
+    #[test]
+    fn program_ok() {
+        let (rest, ret) =
+            program("program prog { version v1 { int proc(void) = a; } = b; } = c;").unwrap();
+        assert_eq!("", rest);
+        let proc = Procedure::new(
+            TypeSpecifier::Int(true),
+            "proc",
+            TypeSpecifier::Void,
+            Value::identifier("a"),
+        );
+        let v1 = Version::new("v1", vec![proc], Value::identifier("b"));
+        assert_eq!(Program::new("prog", vec![v1], Value::identifier("c")), ret);
+    }
+
+    #[test]
+    fn version_ok() {
+        let (rest, ret) = version("version v1 { int proc(void) = a; } = b;").unwrap();
+        assert_eq!("", rest);
+        let proc = Procedure::new(
+            TypeSpecifier::Int(true),
+            "proc",
+            TypeSpecifier::Void,
+            Value::identifier("a"),
+        );
+        assert_eq!(Version::new("v1", vec![proc], Value::identifier("b")), ret);
+    }
+
+    #[test]
+    fn procesure_ok() {
+        let (rest, ret) = procedure("int proc(void) = a;").unwrap();
+        assert_eq!("", rest);
+        assert_eq!(
+            Procedure::new(
+                TypeSpecifier::Int(true),
+                "proc",
+                TypeSpecifier::Void,
+                Value::identifier("a")
+            ),
+            ret
+        );
     }
 }
