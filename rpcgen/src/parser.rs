@@ -7,7 +7,7 @@ use nom::{
         alpha1, alphanumeric1, digit1, hex_digit1, line_ending, multispace0, multispace1,
         not_line_ending, oct_digit1, one_of,
     },
-    combinator::{map, opt, recognize, verify},
+    combinator::{map, opt, peek, recognize, verify},
     multi::{many0, many1, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
     IResult,
@@ -532,29 +532,67 @@ fn type_def(input: &str) -> IResult<&str, TypeDef> {
 
 fn type_specifier(input: &str) -> IResult<&str, TypeSpecifier> {
     alt((
-        map(tuple((tag("unsigned"), multispace1, tag("int"))), |_| {
+        map(
+            tuple((
+                tag("unsigned"),
+                multispace1,
+                terminated(tag("int"), peek(multispace1)),
+            )),
+            |_| TypeSpecifier::Int(false),
+        ),
+        map(terminated(tag("int"), peek(multispace1)), |_| {
+            TypeSpecifier::Int(true)
+        }),
+        map(
+            tuple((
+                tag("unsigned"),
+                multispace1,
+                terminated(tag("hyper"), peek(multispace1)),
+            )),
+            |_| TypeSpecifier::Hyper(false),
+        ),
+        map(terminated(tag("hyper"), peek(multispace1)), |_| {
+            TypeSpecifier::Hyper(true)
+        }),
+        // start (libvirt extenstion)
+        map(
+            tuple((
+                tag("unsigned"),
+                multispace1,
+                terminated(tag("char"), peek(multispace1)),
+            )),
+            |_| TypeSpecifier::Char(false),
+        ),
+        map(terminated(tag("char"), peek(multispace1)), |_| {
+            TypeSpecifier::Char(true)
+        }),
+        map(
+            tuple((
+                tag("unsigned"),
+                multispace1,
+                terminated(tag("short"), peek(multispace1)),
+            )),
+            |_| TypeSpecifier::Short(false),
+        ),
+        map(terminated(tag("short"), peek(multispace1)), |_| {
+            TypeSpecifier::Short(true)
+        }),
+        map(terminated(tag("unsigned"), peek(multispace1)), |_| {
             TypeSpecifier::Int(false)
         }),
-        map(tag("int"), |_| TypeSpecifier::Int(true)),
-        map(tuple((tag("unsigned"), multispace1, tag("hyper"))), |_| {
-            TypeSpecifier::Hyper(false)
-        }),
-        map(tag("hyper"), |_| TypeSpecifier::Hyper(true)),
-        // start (libvirt extenstion)
-        map(tuple((tag("unsigned"), multispace1, tag("char"))), |_| {
-            TypeSpecifier::Char(false)
-        }),
-        map(tag("char"), |_| TypeSpecifier::Char(true)),
-        map(tuple((tag("unsigned"), multispace1, tag("short"))), |_| {
-            TypeSpecifier::Short(false)
-        }),
-        map(tag("short"), |_| TypeSpecifier::Short(true)),
-        map(tag("unsigned"), |_| TypeSpecifier::Int(false)),
         // end (libvirt extenstion)
-        map(tag("float"), |_| TypeSpecifier::Float),
-        map(tag("double"), |_| TypeSpecifier::Double),
-        map(tag("quadruple"), |_| TypeSpecifier::Quadruple),
-        map(tag("bool"), |_| TypeSpecifier::Bool),
+        map(terminated(tag("float"), peek(multispace1)), |_| {
+            TypeSpecifier::Float
+        }),
+        map(terminated(tag("double"), peek(multispace1)), |_| {
+            TypeSpecifier::Double
+        }),
+        map(terminated(tag("quadruple"), peek(multispace1)), |_| {
+            TypeSpecifier::Quadruple
+        }),
+        map(terminated(tag("bool"), peek(multispace1)), |_| {
+            TypeSpecifier::Bool
+        }),
         map(enum_type_spec, TypeSpecifier::enum_type),
         map(struct_type_spec, TypeSpecifier::struct_type),
         map(union_type_spec, TypeSpecifier::union_type),
@@ -906,79 +944,156 @@ void;",
 
     #[test]
     fn type_specifier_unsigned_int() {
-        let (rest, ret) = type_specifier("unsigned int").unwrap();
-        assert_eq!("", rest);
+        let (rest, ret) = type_specifier("unsigned int ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_inta() {
+        let (rest, ret) = type_specifier("unsigned inta ").unwrap();
+        assert_eq!(" inta ", rest);
         assert_eq!(TypeSpecifier::Int(false), ret);
     }
 
     #[test]
     fn type_specifier_int() {
-        let (rest, ret) = type_specifier("int").unwrap();
-        assert_eq!("", rest);
+        let (rest, ret) = type_specifier("int ").unwrap();
+        assert_eq!(" ", rest);
         assert_eq!(TypeSpecifier::Int(true), ret);
     }
 
     #[test]
+    fn type_specifier_inta() {
+        let (rest, ret) = type_specifier("inta ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("inta".to_string()), ret);
+    }
+
+    #[test]
     fn type_specifier_unsigned_hyper() {
-        let (rest, ret) = type_specifier("unsigned hyper").unwrap();
-        assert_eq!("", rest);
+        let (rest, ret) = type_specifier("unsigned hyper ").unwrap();
+        assert_eq!(" ", rest);
         assert_eq!(TypeSpecifier::Hyper(false), ret);
     }
 
     #[test]
-    fn type_specifier_hyper() {
-        let (rest, ret) = type_specifier("hyper").unwrap();
-        assert_eq!("", rest);
-        assert_eq!(TypeSpecifier::Hyper(true), ret);
-    }
-
-    #[test]
-    fn type_specifier_unsigned_char() {
-        let (rest, ret) = type_specifier("unsigned char").unwrap();
-        assert_eq!("", rest);
-        assert_eq!(TypeSpecifier::Char(false), ret);
-    }
-
-    #[test]
-    fn type_specifier_char() {
-        let (rest, ret) = type_specifier("char").unwrap();
-        assert_eq!("", rest);
-        assert_eq!(TypeSpecifier::Char(true), ret);
-    }
-
-    #[test]
-    fn type_specifier_unsigned_short() {
-        let (rest, ret) = type_specifier("unsigned short").unwrap();
-        assert_eq!("", rest);
-        assert_eq!(TypeSpecifier::Short(false), ret);
-    }
-
-    #[test]
-    fn type_specifier_short() {
-        let (rest, ret) = type_specifier("short").unwrap();
-        assert_eq!("", rest);
-        assert_eq!(TypeSpecifier::Short(true), ret);
-    }
-
-    #[test]
-    fn type_specifier_unsigned() {
-        let (rest, ret) = type_specifier("unsigned").unwrap();
-        assert_eq!("", rest);
+    fn type_specifier_unsigned_hypera() {
+        let (rest, ret) = type_specifier("unsigned hypera ").unwrap();
+        assert_eq!(" hypera ", rest);
         assert_eq!(TypeSpecifier::Int(false), ret);
     }
 
     #[test]
+    fn type_specifier_hyper() {
+        let (rest, ret) = type_specifier("hyper ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Hyper(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_hypera() {
+        let (rest, ret) = type_specifier("hypera ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("hypera".to_string()), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_char() {
+        let (rest, ret) = type_specifier("unsigned char ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Char(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_chara() {
+        let (rest, ret) = type_specifier("unsigned chara ").unwrap();
+        assert_eq!(" chara ", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_char() {
+        let (rest, ret) = type_specifier("char ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Char(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_chara() {
+        let (rest, ret) = type_specifier("chara ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("chara".to_string()), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_short() {
+        let (rest, ret) = type_specifier("unsigned short ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Short(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned_shorta() {
+        let (rest, ret) = type_specifier("unsigned shorta ").unwrap();
+        assert_eq!(" shorta ", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_short() {
+        let (rest, ret) = type_specifier("short ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Short(true), ret);
+    }
+
+    #[test]
+    fn type_specifier_shorta() {
+        let (rest, ret) = type_specifier("shorta ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("shorta".to_string()), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigned() {
+        let (rest, ret) = type_specifier("unsigned ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Int(false), ret);
+    }
+
+    #[test]
+    fn type_specifier_unsigneda() {
+        let (rest, ret) = type_specifier("unsigneda ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("unsigneda".to_string()), ret);
+    }
+
+    #[test]
     fn type_specifier_float() {
-        let (rest, ret) = type_specifier("float").unwrap();
-        assert_eq!("", rest);
+        let (rest, ret) = type_specifier("float ").unwrap();
+        assert_eq!(" ", rest);
         assert_eq!(TypeSpecifier::Float, ret);
     }
 
     #[test]
+    fn type_specifier_floata() {
+        let (rest, ret) = type_specifier("floata ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("floata".to_string()), ret);
+    }
+
+    #[test]
     fn type_specifier_double() {
-        let (rest, ret) = type_specifier("double").unwrap();
-        assert_eq!("", rest);
+        let (rest, ret) = type_specifier("double ").unwrap();
+        assert_eq!(" ", rest);
         assert_eq!(TypeSpecifier::Double, ret);
+    }
+
+    #[test]
+    fn type_specifier_doublea() {
+        let (rest, ret) = type_specifier("doublea ").unwrap();
+        assert_eq!(" ", rest);
+        assert_eq!(TypeSpecifier::Identifier("doublea".to_string()), ret);
     }
 
     #[test]
