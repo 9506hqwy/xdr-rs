@@ -5,7 +5,6 @@ use crate::parser::{
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use std::collections::HashMap;
 use std::convert::TryFrom;
 
 #[derive(Clone, Default)]
@@ -15,21 +14,71 @@ pub struct Config {
 
 struct Context {
     config: Config,
-    constants: HashMap<String, u32>,
-    typedefs: HashMap<String, (TokenStream, OpaqueType)>,
+    constants: Vec<(String, Value)>,
+    typedefs: Vec<(String, TypeDef)>,
 }
 
 impl Context {
     fn new(config: &Config) -> Self {
         Context {
             config: config.clone(),
-            constants: HashMap::new(),
-            typedefs: HashMap::new(),
+            constants: vec![],
+            typedefs: vec![],
         }
+    }
+
+    pub fn resolve_const_value<'a, T>(&'a self, name: &str) -> Result<T, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        let (_, value) = self
+            .constants
+            .iter()
+            .find(|(n, _)| n == name)
+            .ok_or_else(|| Error::NotFountIdentifier(name.to_string()))?;
+        match value {
+            Value::Constant(c) => c.value::<T>(),
+            Value::Identifier(i) => self.resolve_name(i),
+        }
+    }
+
+    pub fn resolve_enum_value<'a, T>(&'a self, name: &str) -> Result<T, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        for (_, typedef) in &self.typedefs {
+            if let TypeDef::Enum(_, assigns) = typedef {
+                let assign = assigns.iter().find(|a| a.identifier == name);
+                if let Some(assign) = assign {
+                    return self.resolve_value::<T>(&assign.value);
+                }
+            }
+        }
+
+        Err(Error::NotFountIdentifier(name.to_string()))
+    }
+
+    pub fn resolve_name<'a, T>(&'a self, name: &str) -> Result<T, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        self.resolve_const_value::<T>(name)
+            .or_else(|_| self.resolve_enum_value::<T>(name))
+    }
+
+    fn resolve_value<'a, T>(&'a self, value: &'a Value) -> Result<T, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        let value = match value {
+            Value::Constant(c) => c.value::<T>()?,
+            Value::Identifier(identifier) => self.resolve_name::<T>(identifier)?,
+        };
+        Ok(value)
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum OpaqueType {
     None,
     Fixed,
@@ -38,9 +87,10 @@ enum OpaqueType {
 
 pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Error> {
     let mut cxt = Context::new(config);
+    setup_context(&definitions, &mut cxt)?;
 
-    let constants = constants(&definitions, &mut cxt)?;
-    let types = types(&definitions, &mut cxt)?;
+    let constants = constants_token(&cxt)?;
+    let types = types_token(&cxt)?;
 
     let binding = quote! {
         use serde::{Deserialize, Serialize};
@@ -53,67 +103,84 @@ pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Erro
     Ok(binding.to_string())
 }
 
-fn constants(definitions: &[Definition], cxt: &mut Context) -> Result<Vec<TokenStream>, Error> {
-    let mut results = vec![];
-
+fn setup_context(definitions: &[Definition], cxt: &mut Context) -> Result<(), Error> {
     for definition in definitions {
-        if let Definition::Constant(assign) = definition {
-            let identifier = &assign.identifier;
-            if let Some(value) = assign.constants::<u32>()? {
-                cxt.constants.insert(identifier.to_string(), value);
+        match definition {
+            Definition::Constant(assign) => {
+                let identifier = &assign.identifier;
+                cxt.constants
+                    .push((identifier.to_string(), assign.value.clone()));
             }
-        }
-    }
-
-    for definition in definitions {
-        if let Definition::Constant(assign) = definition {
-            let (c_name, c_value) = convert_assign::<u32>(assign)?;
-            results.push(quote! {
-                pub const #c_name: u32 = #c_value;
-            });
-        }
-    }
-
-    Ok(results)
-}
-
-fn types(definitions: &[Definition], cxt: &mut Context) -> Result<Vec<TokenStream>, Error> {
-    let mut results = vec![];
-
-    for definition in definitions {
-        if let Definition::Type(TypeDef::Declaration(declaration)) = definition {
-            let (name, value, opaque) =
-                convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
-            cxt.typedefs.insert(name.to_string(), (value, opaque));
-        }
-    }
-
-    for definition in definitions {
-        if let Definition::Type(type_def) = definition {
-            match type_def {
+            Definition::Type(typedef) => match typedef {
                 TypeDef::Declaration(declaration) => {
-                    if !cxt.config.remove_typedef {
-                        let (name, value, opaque) =
-                            convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
-                        if opaque != OpaqueType::None {
-                            return Err(Error::NotSupported);
-                        }
-
-                        let name = upper_camel_case_ident(&name.to_string());
-                        results.push(quote! {
-                            type #name = #value;
-                        });
+                    if let Some(name) = declaration.name() {
+                        cxt.typedefs.push((name.to_string(), typedef.clone()));
                     }
                 }
-                TypeDef::Enum(name, assigns) => {
-                    results.push(convert_enum(name, assigns, cxt)?);
+                TypeDef::Enum(name, _) => {
+                    cxt.typedefs.push((name.to_string(), typedef.clone()));
                 }
-                TypeDef::Struct(name, declarations) => {
-                    results.push(convert_struct(name, declarations, cxt)?);
+                TypeDef::Struct(name, _) => {
+                    cxt.typedefs.push((name.to_string(), typedef.clone()));
                 }
-                TypeDef::Union(name, body) => {
-                    results.push(convert_union(name, body, cxt)?);
+                TypeDef::Union(name, _) => {
+                    cxt.typedefs.push((name.to_string(), typedef.clone()));
                 }
+            },
+            Definition::LineComment | Definition::Program(_) => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn constants_token(cxt: &Context) -> Result<Vec<TokenStream>, Error> {
+    let mut results = vec![];
+
+    for (name, value) in &cxt.constants {
+        let name_ident = format_ident!("{}", name);
+        let (value_token, ty) = match convert_value_token::<u32>(value, false) {
+            Ok(v) => Ok((v, quote! { u32 })),
+            Err(_) => match convert_value_token::<u64>(value, false) {
+                Ok(v) => Ok((v, quote! { u64 })),
+                Err(e) => Err(e),
+            },
+        }?;
+        results.push(quote! {
+            pub const #name_ident: #ty = #value_token;
+        });
+    }
+
+    Ok(results)
+}
+
+fn types_token(cxt: &Context) -> Result<Vec<TokenStream>, Error> {
+    let mut results = vec![];
+
+    for (name, typedef) in &cxt.typedefs {
+        match typedef {
+            TypeDef::Declaration(declaration) => {
+                if !cxt.config.remove_typedef {
+                    let (value, opaque) =
+                        convert_type_token(declaration, cxt)?.ok_or(Error::NotSupported)?;
+                    if opaque != OpaqueType::None {
+                        return Err(Error::NotSupported);
+                    }
+
+                    let name_ident = upper_camel_case_ident(name);
+                    results.push(quote! {
+                        type #name_ident = #value;
+                    });
+                }
+            }
+            TypeDef::Enum(_, assigns) => {
+                results.push(convert_enum_token(name, assigns, cxt)?);
+            }
+            TypeDef::Struct(_, declarations) => {
+                results.push(convert_struct_token(name, declarations, cxt)?);
+            }
+            TypeDef::Union(_, body) => {
+                results.push(convert_union_token(name, body, cxt)?);
             }
         }
     }
@@ -121,35 +188,15 @@ fn types(definitions: &[Definition], cxt: &mut Context) -> Result<Vec<TokenStrea
     Ok(results)
 }
 
-fn convert_assign<'a, T>(assign: &'a Assign) -> Result<(Ident, TokenStream), Error>
-where
-    T: TryFrom<&'a Constant> + ToTokens,
-{
-    let name = format_ident!("{}", &assign.identifier);
-    let value = convert_value::<T>(&assign.value)?;
-    Ok((name, value))
-}
-
-fn convert_enum(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenStream, Error> {
+fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenStream, Error> {
     let mut values = vec![];
     let mut default_value = None;
 
-    let mut sindex: i32 = 0;
+    let mut start: i32 = 0;
     for assign in assigns {
-        let (e_name, e_value) = convert_assign::<i32>(assign)?;
+        let end = cxt.resolve_value::<i32>(&assign.value)?;
 
-        let eindex = if let Some(value) = assign.constants::<i32>()? {
-            value
-        } else {
-            let identifier = e_value.to_string();
-            let value = cxt
-                .constants
-                .get(&identifier)
-                .ok_or(Error::NotFountIdentifier(identifier))?;
-            (*value) as i32
-        };
-
-        for index in sindex..eindex {
+        for index in start..end {
             // enum は index でシリアライズするため存在しない値は補完する。
             let reserved = format_ident!("_Reserved{}", index.to_string());
             values.push(quote! {
@@ -157,92 +204,45 @@ fn convert_enum(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenSt
             });
         }
 
-        let e_name = upper_camel_case_ident(&e_name.to_string());
+        let item_ident = upper_camel_case_ident(&assign.identifier);
         values.push(quote! {
-            #e_name = #e_value
+            #item_ident = #end
         });
 
         if default_value.is_none() {
-            default_value = Some(quote! { #e_name });
+            default_value = Some(quote! { #item_ident });
         }
 
-        sindex = eindex + 1;
+        start = end + 1;
     }
 
-    let name = upper_camel_case_ident(name);
+    let name_ident = upper_camel_case_ident(name);
     let default_value = default_value.unwrap();
     Ok(quote! {
         #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
         #[repr(i32)]
-        pub enum #name {
+        pub enum #name_ident {
             #(#values),*
         }
 
-        impl Default for #name {
+        impl Default for #name_ident {
             fn default() -> Self {
-                #name::#default_value
+                #name_ident::#default_value
             }
         }
     })
 }
 
-fn convert_declaration(
-    declaration: &Declaration,
-    cxt: &Context,
-) -> Result<Option<(Ident, TokenStream, OpaqueType)>, Error> {
-    match declaration {
-        Declaration::Variable(type_specifier, name) => {
-            let name = format_ident!("{}", name);
-            let (ty, opaque) = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, ty, opaque)))
-        }
-        Declaration::FixedArray(type_specifier, name, value) => {
-            let name = format_ident!("{}", name);
-            let (ty, opaque) = convert_type(type_specifier, cxt)?;
-            let len = convert_value::<usize>(value)?;
-            Ok(Some((name, quote! { [#ty; #len] }, opaque)))
-        }
-        Declaration::VariableArray(type_specifier, name, _) => {
-            let name = format_ident!("{}", name);
-            let (ty, opaque) = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, quote! { Vec<#ty> }, opaque)))
-        }
-        Declaration::OpaqueFixedArray(name, value) => {
-            let name = format_ident!("{}", name);
-            let len = convert_value::<usize>(value)?;
-            Ok(Some((
-                name,
-                quote! { [u8; #len as usize] },
-                OpaqueType::Fixed,
-            )))
-        }
-        Declaration::OpaqueVariableArray(name, _) => {
-            let name = format_ident!("{}", name);
-            Ok(Some((name, quote! { Vec<u8> }, OpaqueType::Variable)))
-        }
-        Declaration::String(name, _) => {
-            let name = format_ident!("{}", name);
-            Ok(Some((name, quote! { String }, OpaqueType::None)))
-        }
-        Declaration::OptionVariable(type_specifier, name) => {
-            let name = format_ident!("{}", name);
-            let (ty, opaque) = convert_type(type_specifier, cxt)?;
-            Ok(Some((name, quote! { Option<#ty> }, opaque)))
-        }
-        Declaration::Void => Ok(None),
-    }
-}
-
-fn convert_struct(
+fn convert_struct_token(
     name: &str,
     declarations: &[Declaration],
-    cxt: &mut Context,
+    cxt: &Context,
 ) -> Result<TokenStream, Error> {
     let mut fields = vec![];
 
     for declaration in declarations {
-        let (mut f_name, f_ty, opaque) =
-            convert_declaration(declaration, cxt)?.ok_or(Error::NotSupported)?;
+        let mut field_name = declaration.name().unwrap().to_string();
+        let (ty, opaque) = convert_type_token(declaration, cxt)?.ok_or(Error::NotSupported)?;
 
         let derive = match opaque {
             OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
@@ -250,28 +250,194 @@ fn convert_struct(
             _ => quote! {},
         };
 
-        if keyword::rust_reserved(&format!("{}", f_name)) {
-            f_name = format_ident!("r#{}", f_name);
+        if keyword::rust_reserved(&field_name) {
+            field_name = format!("r#{}", field_name);
         }
 
-        let f_name = snake_case_ident(&f_name.to_string());
+        let field_name_ident = snake_case_ident(&field_name);
 
         fields.push(quote! {
             #derive
-            pub #f_name: #f_ty
+            pub #field_name_ident: #ty
         });
     }
 
-    let name = upper_camel_case_ident(name);
+    let name_ident = upper_camel_case_ident(name);
     Ok(quote! {
         #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-        pub struct #name {
+        pub struct #name_ident {
             #(#fields),*
         }
     })
 }
 
-fn convert_type(
+fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<TokenStream, Error> {
+    let mut specs = vec![];
+    let mut default_value = None;
+
+    let cond_type = match &body.cond {
+        Declaration::Variable(cond_type, _) => Ok(cond_type),
+        _ => Err(Error::NotSupported),
+    }?;
+
+    match cond_type {
+        TypeSpecifier::Int(_) | TypeSpecifier::Identifier(_) => {
+            let mut sindex: u32 = 0;
+            for spec in &body.specs {
+                for value in &spec.values {
+                    let eindex = cxt.resolve_value(value)?;
+
+                    for index in sindex..eindex {
+                        // enum は index でシリアライズするため存在しない値は補完する。
+                        let reserved = format_ident!("_Reserved{}", index.to_string());
+                        specs.push(quote! {
+                            #reserved
+                        });
+                    }
+
+                    let (value, default) = convert_case_token(value, &spec.declaration, cxt)?;
+                    specs.push(value);
+                    if default_value.is_none() {
+                        default_value = Some(default);
+                    }
+
+                    sindex = eindex + 1;
+                }
+            }
+        }
+        TypeSpecifier::Bool => {
+            let false_case = body
+                .specs
+                .iter()
+                .find(|s| s.values.iter().any(|v| v.is_false()));
+            match false_case {
+                Some(case) => {
+                    let value = case.values.iter().find(|v| v.is_false()).unwrap();
+
+                    let (value, default) = convert_case_token(value, &case.declaration, cxt)?;
+                    specs.push(value);
+                    if default_value.is_none() {
+                        default_value = Some(default);
+                    }
+                }
+                _ => {
+                    specs.push(quote! {
+                        _Reserved0
+                    });
+                }
+            }
+
+            let true_case = body
+                .specs
+                .iter()
+                .find(|s| s.values.iter().any(|v| v.is_true()));
+            match true_case {
+                Some(case) => {
+                    let value = case.values.iter().find(|v| v.is_true()).unwrap();
+
+                    let (value, default) = convert_case_token(value, &case.declaration, cxt)?;
+                    specs.push(value);
+                    if default_value.is_none() {
+                        default_value = Some(default);
+                    }
+                }
+                _ => {
+                    specs.push(quote! {
+                        _Reserved1
+                    });
+                }
+            }
+        }
+        _ => return Err(Error::NotSupported),
+    }
+
+    if let Some(default) = &body.default {
+        if let Some((v_ty, _)) = convert_type_token(default, cxt)? {
+            specs.push(quote! {
+                Default(#v_ty)
+            });
+
+            default_value = Some(quote! { Default(Default::default()) });
+        } else {
+            specs.push(quote! {
+                Default
+            });
+
+            default_value = Some(quote! { Default });
+        }
+    }
+
+    let name_ident = upper_camel_case_ident(name);
+    let default_value = default_value.unwrap();
+    Ok(quote! {
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub enum #name_ident {
+            #(#specs),*
+        }
+
+        impl Default for #name_ident {
+            fn default() -> Self {
+                #name_ident::#default_value
+            }
+        }
+    })
+}
+
+fn convert_value_token<'a, T>(value: &'a Value, cnv: bool) -> Result<TokenStream, Error>
+where
+    T: TryFrom<&'a Constant> + ToTokens,
+{
+    match value {
+        Value::Constant(c) => {
+            let v = c.value::<T>()?;
+            Ok(quote! { #v })
+        }
+        Value::Identifier(i) => {
+            let v = if cnv {
+                upper_camel_case_ident(i)
+            } else {
+                format_ident!("{}", i)
+            };
+            Ok(quote! { #v })
+        }
+    }
+}
+
+fn convert_type_token(
+    declaration: &Declaration,
+    cxt: &Context,
+) -> Result<Option<(TokenStream, OpaqueType)>, Error> {
+    match declaration {
+        Declaration::Variable(type_specifier, _) => {
+            let (ty, opaque) = convert_primitive_token(type_specifier, cxt)?;
+            Ok(Some((ty, opaque)))
+        }
+        Declaration::FixedArray(type_specifier, _, value) => {
+            let (ty, opaque) = convert_primitive_token(type_specifier, cxt)?;
+            let len = convert_value_token::<usize>(value, false)?;
+            Ok(Some((quote! { [#ty; #len] }, opaque)))
+        }
+        Declaration::VariableArray(type_specifier, _, _) => {
+            let (ty, opaque) = convert_primitive_token(type_specifier, cxt)?;
+            Ok(Some((quote! { Vec<#ty> }, opaque)))
+        }
+        Declaration::OpaqueFixedArray(_, value) => {
+            let len = convert_value_token::<usize>(value, false)?;
+            Ok(Some((quote! { [u8; #len as usize] }, OpaqueType::Fixed)))
+        }
+        Declaration::OpaqueVariableArray(_, _) => {
+            Ok(Some((quote! { Vec<u8> }, OpaqueType::Variable)))
+        }
+        Declaration::String(_, _) => Ok(Some((quote! { String }, OpaqueType::None))),
+        Declaration::OptionVariable(type_specifier, _) => {
+            let (ty, opaque) = convert_primitive_token(type_specifier, cxt)?;
+            Ok(Some((quote! { Option<#ty> }, opaque)))
+        }
+        Declaration::Void => Ok(None),
+    }
+}
+
+fn convert_primitive_token(
     specifier: &TypeSpecifier,
     cxt: &Context,
 ) -> Result<(TokenStream, OpaqueType), Error> {
@@ -294,7 +460,7 @@ fn convert_type(
         TypeSpecifier::Struct(_) => Err(Error::NotSupported),
         TypeSpecifier::Union(_) => Err(Error::NotSupported),
         TypeSpecifier::Identifier(id) => {
-            let (id, opaque) = resolve_type(id, cxt)?;
+            let (id, opaque) = resolve_type_token(id, cxt)?;
             Ok((quote! { #id }, opaque))
         }
         TypeSpecifier::Char(signed) => Ok(if *signed {
@@ -311,131 +477,45 @@ fn convert_type(
     }
 }
 
-fn convert_union(name: &str, body: &UnionBody, cxt: &mut Context) -> Result<TokenStream, Error> {
-    let mut specs = vec![];
-    let mut default_value = None;
+fn convert_case_token(
+    value: &Value,
+    declaration: &Declaration,
+    cxt: &Context,
+) -> Result<(TokenStream, TokenStream), Error> {
+    let value = convert_value_token::<u32>(value, true)?;
 
-    let cond_type = if let Declaration::Variable(cond_type, _) = &body.cond {
-        Ok(cond_type)
+    let decl = convert_type_token(declaration, cxt)?;
+    if let Some((v_ty, opaque)) = &decl {
+        let derive = match opaque {
+            OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
+            OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
+            _ => quote! {},
+        };
+
+        let value_token = quote! {
+            #derive
+            #value(#v_ty)
+        };
+        let default_token = quote! { #value(Default::default()) };
+        Ok((value_token, default_token))
     } else {
-        Err(Error::NotSupported)
-    }?;
-
-    match cond_type {
-        TypeSpecifier::Int(_) => {
-            let mut sindex: u32 = 0;
-            for spec in &body.specs {
-                let decl = convert_declaration(&spec.declaration, cxt)?;
-                for value in &spec.values {
-                    let eindex = match value {
-                        Value::Constant(value) => u32::try_from(value)?,
-                        Value::Identifier(identifier) => {
-                            let value = cxt
-                                .constants
-                                .get(identifier)
-                                .ok_or_else(|| Error::NotFountIdentifier(identifier.to_string()))?;
-                            *value
-                        }
-                    };
-
-                    for index in sindex..eindex {
-                        // enum は index でシリアライズするため存在しない値は補完する。
-                        let reserved = format_ident!("_Reserved{}", index.to_string());
-                        specs.push(quote! {
-                            #reserved
-                        });
-                    }
-
-                    let value = convert_value::<u32>(value)?;
-                    let value = upper_camel_case_ident(&value.to_string());
-                    if let Some((_, v_ty, opaque)) = &decl {
-                        if *opaque != OpaqueType::None {
-                            return Err(Error::NotSupported);
-                        }
-
-                        specs.push(quote! {
-                            #value(#v_ty)
-                        });
-
-                        if default_value.is_none() {
-                            default_value = Some(quote! { #value(#v_ty::default()) });
-                        }
-                    } else {
-                        specs.push(quote! {
-                            #value
-                        });
-
-                        if default_value.is_none() {
-                            default_value = Some(quote! { #value });
-                        }
-                    }
-
-                    sindex = eindex + 1;
-                }
-            }
-        }
-        TypeSpecifier::Bool => return Err(Error::NotSupported),
-        _ => return Err(Error::NotSupported),
-    }
-
-    if let Some(default) = &body.default {
-        if let Some((_, v_ty, _)) = convert_declaration(default, cxt)? {
-            specs.push(quote! {
-                Default(#v_ty)
-            });
-
-            default_value = Some(quote! { Default(#v_ty::default()) });
-        } else {
-            specs.push(quote! {
-                Default
-            });
-
-            default_value = Some(quote! { Default });
-        }
-    }
-
-    let name = upper_camel_case_ident(name);
-    let default_value = default_value.unwrap();
-    Ok(quote! {
-        #[derive(Clone, Debug, Deserialize, Serialize)]
-        pub enum #name {
-            #(#specs),*
-        }
-
-        impl Default for #name {
-            fn default() -> Self {
-                #name::#default_value
-            }
-        }
-    })
-}
-
-fn convert_value<'a, T>(value: &'a Value) -> Result<TokenStream, Error>
-where
-    T: TryFrom<&'a Constant> + ToTokens,
-{
-    match value {
-        Value::Constant(c) => {
-            let n = T::try_from(c).map_err(|_| Error::Parse(format!("{:?}", c)))?;
-            Ok(quote! { #n })
-        }
-        Value::Identifier(i) => {
-            let identifier = format_ident!("{}", i);
-            Ok(quote! { #identifier })
-        }
+        let value_token = quote! { #value };
+        let default_token = quote! { #value };
+        Ok((value_token, default_token))
     }
 }
 
-fn resolve_type(value: &str, cxt: &Context) -> Result<(TokenStream, OpaqueType), Error> {
+fn resolve_type_token(value: &str, cxt: &Context) -> Result<(TokenStream, OpaqueType), Error> {
     if !cxt.config.remove_typedef {
         let name = upper_camel_case_ident(value);
         return Ok((quote! { #name }, OpaqueType::None));
     }
 
-    for (d_name, (d_value, opaque)) in cxt.typedefs.iter() {
-        if value == d_name {
-            return Ok((quote! { #d_value }, opaque.clone()));
-        }
+    let typedef = cxt.typedefs.iter().find(|(name, _)| name == value);
+    if let Some((_, TypeDef::Declaration(declaration))) = typedef {
+        let (value, opaque) = convert_type_token(declaration, cxt)?.ok_or(Error::NotSupported)?;
+
+        return Ok((quote! { #value }, opaque));
     }
 
     let name = upper_camel_case_ident(value);
@@ -529,6 +609,104 @@ fn with_underscore(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn context_resolve_constant_value_ok() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.constants.push((
+            "a".to_string(),
+            Value::Constant(Constant::Decimal("10".to_string())),
+        ));
+        let n = cxt.resolve_const_value::<u32>("a").unwrap();
+        assert_eq!(10u32, n);
+    }
+
+    #[test]
+    fn context_resolve_constant_value_err() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.constants.push((
+            "a".to_string(),
+            Value::Constant(Constant::Decimal("10".to_string())),
+        ));
+        let n = cxt.resolve_const_value::<u32>("n");
+        assert!(n.is_err());
+    }
+
+    #[test]
+    fn context_resolve_enum_value_ok() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.typedefs.push((
+            "a".to_string(),
+            TypeDef::Enum(
+                "a".to_string(),
+                vec![Assign {
+                    identifier: "b".to_string(),
+                    value: Value::Constant(Constant::Decimal("10".to_string())),
+                }],
+            ),
+        ));
+        let n = cxt.resolve_enum_value::<u32>("b").unwrap();
+        assert_eq!(10u32, n);
+    }
+
+    #[test]
+    fn context_resolve_enum_value_err() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.typedefs.push((
+            "a".to_string(),
+            TypeDef::Enum(
+                "a".to_string(),
+                vec![Assign {
+                    identifier: "b".to_string(),
+                    value: Value::Constant(Constant::Decimal("10".to_string())),
+                }],
+            ),
+        ));
+        let n = cxt.resolve_enum_value::<u32>("n");
+        assert!(n.is_err());
+    }
+
+    #[test]
+    fn context_resolve_name_ok1() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.constants.push((
+            "a".to_string(),
+            Value::Constant(Constant::Decimal("10".to_string())),
+        ));
+        cxt.typedefs.push((
+            "b".to_string(),
+            TypeDef::Enum(
+                "b".to_string(),
+                vec![Assign {
+                    identifier: "c".to_string(),
+                    value: Value::Constant(Constant::Decimal("11".to_string())),
+                }],
+            ),
+        ));
+        let n = cxt.resolve_name::<u32>("a").unwrap();
+        assert_eq!(10u32, n);
+    }
+
+    #[test]
+    fn context_resolve_name_ok2() {
+        let mut cxt = Context::new(&Default::default());
+        cxt.constants.push((
+            "a".to_string(),
+            Value::Constant(Constant::Decimal("10".to_string())),
+        ));
+        cxt.typedefs.push((
+            "b".to_string(),
+            TypeDef::Enum(
+                "b".to_string(),
+                vec![Assign {
+                    identifier: "c".to_string(),
+                    value: Value::Constant(Constant::Decimal("11".to_string())),
+                }],
+            ),
+        ));
+        let n = cxt.resolve_name::<u32>("c").unwrap();
+        assert_eq!(11u32, n);
+    }
 
     #[test]
     fn upper_camel_case_to_upper_camel_case() {

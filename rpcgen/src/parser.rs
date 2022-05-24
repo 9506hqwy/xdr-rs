@@ -30,23 +30,10 @@ pub struct Assign {
 }
 
 impl Assign {
-    fn value(identifier: &str, value: Value) -> Self {
+    fn new(identifier: &str, value: Value) -> Self {
         Assign {
             identifier: identifier.to_string(),
             value,
-        }
-    }
-
-    pub fn constants<'a, T>(&'a self) -> Result<Option<T>, Error>
-    where
-        T: TryFrom<&'a Constant>,
-    {
-        match &self.value {
-            Value::Constant(c) => {
-                let n = T::try_from(c).map_err(|_| Error::Parse(format!("{:?}", c)))?;
-                Ok(Some(n))
-            }
-            _ => Ok(None),
         }
     }
 }
@@ -73,6 +60,16 @@ pub enum Constant {
     Octal(String),
 }
 
+impl<'a> Constant {
+    pub fn value<T>(&'a self) -> Result<T, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        let n = T::try_from(self).map_err(|_| Error::Parse(format!("{:?}", self)))?;
+        Ok(n)
+    }
+}
+
 impl TryFrom<&Constant> for i32 {
     type Error = std::num::ParseIntError;
 
@@ -93,6 +90,18 @@ impl TryFrom<&Constant> for u32 {
             Constant::Decimal(v) => u32::from_str(v),
             Constant::Hex(v) => u32::from_str_radix(v, 16),
             Constant::Octal(v) => u32::from_str_radix(v, 8),
+        }
+    }
+}
+
+impl TryFrom<&Constant> for u64 {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: &Constant) -> Result<Self, Self::Error> {
+        match value {
+            Constant::Decimal(v) => u64::from_str(v),
+            Constant::Hex(v) => u64::from_str_radix(v, 16),
+            Constant::Octal(v) => u64::from_str_radix(v, 8),
         }
     }
 }
@@ -156,6 +165,19 @@ impl Declaration {
 
     fn void() -> Self {
         Declaration::Void
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Declaration::Variable(_, name) => Some(name),
+            Declaration::FixedArray(_, name, _) => Some(name),
+            Declaration::VariableArray(_, name, _) => Some(name),
+            Declaration::OpaqueFixedArray(name, _) => Some(name),
+            Declaration::OpaqueVariableArray(name, _) => Some(name),
+            Declaration::String(name, _) => Some(name),
+            Declaration::OptionVariable(_, name) => Some(name),
+            Declaration::Void => None,
+        }
     }
 }
 
@@ -316,6 +338,32 @@ impl Value {
     fn identifier(value: &str) -> Self {
         Value::Identifier(value.to_string())
     }
+
+    pub fn constants<'a, T>(&'a self) -> Result<Option<T>, Error>
+    where
+        T: TryFrom<&'a Constant>,
+    {
+        match self {
+            Value::Constant(c) => Ok(Some(c.value::<T>()?)),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn is_false(&self) -> bool {
+        if let Value::Identifier(value) = &self {
+            value == "FALSE"
+        } else {
+            false
+        }
+    }
+
+    pub fn is_true(&self) -> bool {
+        if let Value::Identifier(value) = &self {
+            value == "TRUE"
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -377,7 +425,7 @@ fn assign(input: &str) -> IResult<&str, Assign> {
             identifier,
             preceded(tuple((comment0, tag("="), comment0)), value),
         )),
-        |(i, v)| Assign::value(i, v),
+        |(i, v)| Assign::new(i, v),
     )(input)
 }
 
@@ -769,7 +817,7 @@ mod tests {
     fn assign_ok() {
         let (rest, ret) = assign("a = b").unwrap();
         assert_eq!("", rest);
-        assert_eq!(Assign::value("a", Value::identifier("b")), ret);
+        assert_eq!(Assign::new("a", Value::identifier("b")), ret);
     }
 
     #[test]
@@ -855,9 +903,121 @@ void;",
         let (rest, ret) = constant_def("const a = 1;").unwrap();
         assert_eq!("", rest);
         assert_eq!(
-            Assign::value("a", Value::constant(Constant::Decimal("1".to_string()))),
+            Assign::new("a", Value::constant(Constant::Decimal("1".to_string()))),
             ret
         );
+    }
+
+    #[test]
+    fn constatn_value_dec_i32() {
+        let c = Constant::Decimal("10".to_string());
+        let v = c.value::<i32>().unwrap();
+        assert_eq!(10i32, v);
+    }
+
+    #[test]
+    fn constatn_value_hex_i32() {
+        let c = Constant::Hex("10".to_string());
+        let v = c.value::<i32>().unwrap();
+        assert_eq!(16i32, v);
+    }
+
+    #[test]
+    fn constatn_value_oct_i32() {
+        let c = Constant::Octal("10".to_string());
+        let v = c.value::<i32>().unwrap();
+        assert_eq!(8i32, v);
+    }
+
+    #[test]
+    fn constatn_value_err_i32() {
+        let c = Constant::Decimal("a".to_string());
+        let e = c.value::<i32>();
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn constatn_value_dec_u32() {
+        let c = Constant::Decimal("10".to_string());
+        let v = c.value::<u32>().unwrap();
+        assert_eq!(10u32, v);
+    }
+
+    #[test]
+    fn constatn_value_hex_u32() {
+        let c = Constant::Hex("10".to_string());
+        let v = c.value::<u32>().unwrap();
+        assert_eq!(16u32, v);
+    }
+
+    #[test]
+    fn constatn_value_oct_u32() {
+        let c = Constant::Octal("10".to_string());
+        let v = c.value::<u32>().unwrap();
+        assert_eq!(8u32, v);
+    }
+
+    #[test]
+    fn constatn_value_err_u32() {
+        let c = Constant::Decimal("a".to_string());
+        let e = c.value::<u32>();
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn constatn_value_dec_u64() {
+        let c = Constant::Decimal("10".to_string());
+        let v = c.value::<u64>().unwrap();
+        assert_eq!(10u64, v);
+    }
+
+    #[test]
+    fn constatn_value_hex_u64() {
+        let c = Constant::Hex("10".to_string());
+        let v = c.value::<u64>().unwrap();
+        assert_eq!(16u64, v);
+    }
+
+    #[test]
+    fn constatn_value_oct_u64() {
+        let c = Constant::Octal("10".to_string());
+        let v = c.value::<u64>().unwrap();
+        assert_eq!(8u64, v);
+    }
+
+    #[test]
+    fn constatn_value_err_u64() {
+        let c = Constant::Decimal("a".to_string());
+        let e = c.value::<u64>();
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn constatn_value_dec_usize() {
+        let c = Constant::Decimal("10".to_string());
+        let v = c.value::<usize>().unwrap();
+        assert_eq!(10usize, v);
+    }
+
+    #[test]
+    fn constatn_value_hex_usize() {
+        let c = Constant::Hex("10".to_string());
+        let v = c.value::<usize>().unwrap();
+        assert_eq!(16usize, v);
+    }
+
+    #[test]
+    fn constatn_value_oxt_usize() {
+        let c = Constant::Octal("10".to_string());
+        let v = c.value::<usize>().unwrap();
+        assert_eq!(8usize, v);
+    }
+
+    #[test]
+    fn constatn_value_err_usize() {
+        let c = Constant::Decimal("a".to_string());
+        let e = c.value::<usize>();
+        assert!(e.is_err());
     }
 
     #[test]
@@ -949,11 +1109,67 @@ void;",
     }
 
     #[test]
+    fn declaration_name_fixed_array() {
+        let decl = Declaration::fixed_array(TypeSpecifier::Int(false), "a", Value::identifier("b"));
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_opaque_fixed_array() {
+        let decl = Declaration::opaque_fixed_array("a", Value::identifier("b"));
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_opaque_variable_array() {
+        let decl = Declaration::opaque_variable_array("a", None);
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_option_variable() {
+        let decl = Declaration::option_variable(TypeSpecifier::Int(false), "a");
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_string() {
+        let decl = Declaration::string("a", None);
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_variable() {
+        let decl = Declaration::variable(TypeSpecifier::Int(false), "a");
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_variable_array() {
+        let decl = Declaration::variable_array(TypeSpecifier::Int(false), "a", None);
+        let name = decl.name().unwrap();
+        assert_eq!("a", name);
+    }
+
+    #[test]
+    fn declaration_name_void() {
+        let decl = Declaration::void();
+        let name = decl.name();
+        assert!(name.is_none());
+    }
+
+    #[test]
     fn definition_constant() {
         let (rest, ret) = definition("const a = 1;").unwrap();
         assert_eq!("", rest);
         assert_eq!(
-            Definition::constant_def(Assign::value(
+            Definition::constant_def(Assign::new(
                 "a",
                 Value::constant(Constant::Decimal("1".to_string()))
             )),
@@ -976,7 +1192,7 @@ void;",
         let (rest, ret) = enum_type_spec("enum { a = 1 }").unwrap();
         assert_eq!("", rest);
         assert_eq!(
-            EnumTypeSpec::new(vec![Assign::value(
+            EnumTypeSpec::new(vec![Assign::new(
                 "a",
                 Value::constant(Constant::Decimal("1".to_string()))
             ),]),
@@ -990,8 +1206,8 @@ void;",
         assert_eq!("", rest);
         assert_eq!(
             EnumTypeSpec::new(vec![
-                Assign::value("a", Value::constant(Constant::Decimal("1".to_string()))),
-                Assign::value("b", Value::constant(Constant::Decimal("2".to_string())))
+                Assign::new("a", Value::constant(Constant::Decimal("1".to_string()))),
+                Assign::new("b", Value::constant(Constant::Decimal("2".to_string())))
             ]),
             ret
         );
@@ -1031,7 +1247,7 @@ void;",
         assert_eq!(
             TypeDef::enum_def(
                 "a",
-                vec![Assign::value(
+                vec![Assign::new(
                     "b",
                     Value::constant(Constant::Decimal("0".to_string()))
                 )]
@@ -1233,6 +1449,51 @@ void;",
         let (rest, ret) = value("a").unwrap();
         assert_eq!("", rest);
         assert_eq!(Value::identifier("a"), ret);
+    }
+
+    #[test]
+    fn value_constants_ok_u32() {
+        let v = Value::Constant(Constant::Decimal("10".to_string()));
+        let n = v.constants::<u32>().unwrap().unwrap();
+        assert_eq!(10u32, n);
+    }
+
+    #[test]
+    fn value_constants_err() {
+        let v = Value::Constant(Constant::Decimal("a".to_string()));
+        let e = v.constants::<u32>();
+        assert!(e.is_err());
+    }
+
+    #[test]
+    fn value_constants_none() {
+        let v = Value::Identifier("a".to_string());
+        let n = v.constants::<u32>().unwrap();
+        assert!(n.is_none());
+    }
+
+    #[test]
+    fn value_is_true_true() {
+        let v = Value::identifier("TRUE");
+        assert!(v.is_true());
+    }
+
+    #[test]
+    fn value_is_true_false() {
+        let v = Value::identifier("a");
+        assert!(!v.is_true());
+    }
+
+    #[test]
+    fn value_is_false_true() {
+        let v = Value::identifier("FALSE");
+        assert!(v.is_false());
+    }
+
+    #[test]
+    fn value_is_false_false() {
+        let v = Value::identifier("a");
+        assert!(!v.is_false());
     }
 
     #[test]
