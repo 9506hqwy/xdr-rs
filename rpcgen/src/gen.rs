@@ -246,9 +246,10 @@ fn convert_struct_token(
 ) -> Result<TokenStream, Error> {
     let mut fields = vec![];
 
+    let struct_type = Some(TypeSpecifier::Identifier(name.to_string()));
     for declaration in declarations {
         let mut field_name = declaration.name().unwrap().to_string();
-        let (ty, opaque) = convert_type_token(declaration, cxt)?.ok_or(Error::NotSupported)?;
+        let (mut ty, opaque) = convert_type_token(declaration, cxt)?.ok_or(Error::NotSupported)?;
 
         let derive = match opaque {
             OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
@@ -261,6 +262,11 @@ fn convert_struct_token(
         }
 
         let field_name_ident = snake_case_ident(&field_name);
+
+        if struct_type == declaration.type_specifier() {
+            // TODO: Add nested structure support.
+            ty = quote! { Box<#ty> };
+        }
 
         fields.push(quote! {
             #derive

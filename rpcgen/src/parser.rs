@@ -179,6 +179,19 @@ impl Declaration {
             Declaration::Void => None,
         }
     }
+
+    pub fn type_specifier(&self) -> Option<TypeSpecifier> {
+        match self {
+            Declaration::Variable(ty, _) => Some(ty.clone()),
+            Declaration::FixedArray(ty, _, _) => Some(ty.clone()),
+            Declaration::VariableArray(ty, _, _) => Some(ty.clone()),
+            Declaration::OpaqueFixedArray(_, _) => Some(TypeSpecifier::identifier_type("u8")),
+            Declaration::OpaqueVariableArray(_, _) => Some(TypeSpecifier::identifier_type("u8")),
+            Declaration::String(_, _) => Some(TypeSpecifier::identifier_type("String")),
+            Declaration::OptionVariable(ty, _) => Some(ty.clone()),
+            Declaration::Void => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1162,6 +1175,62 @@ void;",
         let decl = Declaration::void();
         let name = decl.name();
         assert!(name.is_none());
+    }
+
+    #[test]
+    fn declaration_type_specifier_fixed_array() {
+        let decl = Declaration::fixed_array(TypeSpecifier::Int(false), "a", Value::identifier("b"));
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::Int(false), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_opaque_fixed_array() {
+        let decl = Declaration::opaque_fixed_array("a", Value::identifier("b"));
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::identifier_type("u8"), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_opaque_variable_array() {
+        let decl = Declaration::opaque_variable_array("a", None);
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::identifier_type("u8"), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_option_variable() {
+        let decl = Declaration::option_variable(TypeSpecifier::Int(false), "a");
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::Int(false), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_string() {
+        let decl = Declaration::string("a", None);
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::identifier_type("String"), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_variable() {
+        let decl = Declaration::variable(TypeSpecifier::Int(false), "a");
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::Int(false), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_variable_array() {
+        let decl = Declaration::variable_array(TypeSpecifier::Int(false), "a", None);
+        let ty = decl.type_specifier().unwrap();
+        assert_eq!(TypeSpecifier::Int(false), ty);
+    }
+
+    #[test]
+    fn declaration_type_specifier_void() {
+        let decl = Declaration::void();
+        let ty = decl.type_specifier();
+        assert!(ty.is_none());
     }
 
     #[test]
