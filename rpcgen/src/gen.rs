@@ -189,13 +189,19 @@ fn types_token(cxt: &Context) -> Result<Vec<TokenStream>, Error> {
 }
 
 fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<TokenStream, Error> {
+    let mut indexed = vec![];
+    for assign in assigns {
+        let index = cxt.resolve_value::<i32>(&assign.value)?;
+        indexed.push((index, assign));
+    }
+
+    indexed.sort_by_key(|i| i.0);
+
     let mut values = vec![];
     let mut default_value = None;
 
     let mut start: i32 = 0;
-    for assign in assigns {
-        let end = cxt.resolve_value::<i32>(&assign.value)?;
-
+    for (end, assign) in indexed {
         for index in start..end {
             // enum は index でシリアライズするため存在しない値は補完する。
             let reserved = format_ident!("_Reserved{}", index.to_string());
@@ -282,27 +288,33 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
 
     match cond_type {
         TypeSpecifier::Int(_) | TypeSpecifier::Identifier(_) => {
-            let mut sindex: u32 = 0;
+            let mut values = vec![];
             for spec in &body.specs {
                 for value in &spec.values {
-                    let eindex = cxt.resolve_value(value)?;
-
-                    for index in sindex..eindex {
-                        // enum は index でシリアライズするため存在しない値は補完する。
-                        let reserved = format_ident!("_Reserved{}", index.to_string());
-                        specs.push(quote! {
-                            #reserved
-                        });
-                    }
-
-                    let (value, default) = convert_case_token(value, &spec.declaration, cxt)?;
-                    specs.push(value);
-                    if default_value.is_none() {
-                        default_value = Some(default);
-                    }
-
-                    sindex = eindex + 1;
+                    let index = cxt.resolve_value(value)?;
+                    values.push((index, spec.declaration.clone(), value));
                 }
+            }
+
+            values.sort_by_key(|s| s.0);
+
+            let mut sindex: u32 = 0;
+            for (eindex, decl, value) in values {
+                for index in sindex..eindex {
+                    // enum は index でシリアライズするため存在しない値は補完する。
+                    let reserved = format_ident!("_Reserved{}", index.to_string());
+                    specs.push(quote! {
+                        #reserved
+                    });
+                }
+
+                let (value, default) = convert_case_token(value, &decl, cxt)?;
+                specs.push(value);
+                if default_value.is_none() {
+                    default_value = Some(default);
+                }
+
+                sindex = eindex + 1;
             }
         }
         TypeSpecifier::Bool => {
