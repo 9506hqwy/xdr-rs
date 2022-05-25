@@ -65,6 +65,11 @@ mod de_tests {
         a: Vec<u8>,
     }
 
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct VariableOpaqueArray {
+        a: Vec<opaque::VariableArray>,
+    }
+
     #[test]
     fn from_bytes_bool() {
         let v = [0x00, 0x00, 0x00, 0x00];
@@ -361,6 +366,29 @@ mod de_tests {
         let ret: VariableOpaqueStruct = from_bytes(&v).unwrap();
         assert_eq!(VariableOpaqueStruct { a: vec![1, 2] }, ret);
     }
+
+    #[test]
+    fn from_bytes_variable_opaque_array() {
+        let v = [
+            0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03, 0x00,
+        ];
+        let ret: VariableOpaqueArray = from_bytes(&v).unwrap();
+        assert_eq!(
+            VariableOpaqueArray {
+                a: vec![
+                    opaque::VariableArray { data: vec![0x00] },
+                    opaque::VariableArray {
+                        data: vec![0x01, 0x02]
+                    },
+                    opaque::VariableArray {
+                        data: vec![0x01, 0x02, 0x03]
+                    },
+                ]
+            },
+            ret
+        );
+    }
 }
 
 #[cfg(test)]
@@ -415,10 +443,16 @@ mod ser_tests {
         #[serde(with = "opaque::fixed")]
         a: [u8; 2],
     }
+
     #[derive(Serialize)]
     struct VariableOpaqueStruct {
         #[serde(with = "opaque::variable")]
         a: Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct VariableOpaqueArray {
+        a: Vec<opaque::VariableArray>,
     }
 
     #[test]
@@ -693,5 +727,28 @@ mod ser_tests {
         let v = VariableOpaqueStruct { a: vec![1, 2] };
         let ret = to_bytes(&v).unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x02, 0x01, 0x02, 0x00, 0x00], ret);
+    }
+
+    #[test]
+    fn from_bytes_variable_opaque_array() {
+        let v = VariableOpaqueArray {
+            a: vec![
+                opaque::VariableArray { data: vec![0x00] },
+                opaque::VariableArray {
+                    data: vec![0x01, 0x02],
+                },
+                opaque::VariableArray {
+                    data: vec![0x01, 0x02, 0x03],
+                },
+            ],
+        };
+        let ret = to_bytes(&v).unwrap();
+        assert_eq!(
+            vec![
+                0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x02, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x02, 0x03, 0x00
+            ],
+            ret
+        );
     }
 }

@@ -1,6 +1,13 @@
 use serde::de::{SeqAccess, Visitor};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::marker::PhantomData;
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct VariableArray {
+    #[serde(with = "variable")]
+    pub data: Vec<u8>,
+}
 
 struct OpaqueVisitor<T> {
     marker: PhantomData<T>,

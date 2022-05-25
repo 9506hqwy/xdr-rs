@@ -437,7 +437,15 @@ fn convert_type_token(
         }
         Declaration::VariableArray(type_specifier, _, _) => {
             let (ty, opaque) = convert_primitive_token(type_specifier, cxt)?;
-            Ok(Some((quote! { Vec<#ty> }, opaque)))
+            if opaque == OpaqueType::Variable {
+                Ok(Some((
+                    quote! { Vec<serde_xdr::opaque::VariableArray> },
+                    OpaqueType::None,
+                )))
+            } else {
+                // TODO: Add inner fixed opaque array support.
+                Ok(Some((quote! { Vec<#ty> }, opaque)))
+            }
         }
         Declaration::OpaqueFixedArray(_, value) => {
             let len = convert_value_token::<usize>(value, false)?;
