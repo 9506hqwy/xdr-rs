@@ -1,5 +1,6 @@
 pub mod error;
 pub mod opaque;
+pub mod primitive;
 
 mod de;
 mod ser;
@@ -68,6 +69,26 @@ mod de_tests {
     #[derive(Debug, Deserialize, PartialEq)]
     struct VariableOpaqueArray {
         a: Vec<opaque::VariableArray>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum CustomEnum {
+        C = 3,
+    }
+
+    impl From<i32> for CustomEnum {
+        fn from(v: i32) -> Self {
+            match v {
+                3 => CustomEnum::C,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct CustomEnumStruct {
+        #[serde(with = "primitive::signed32")]
+        a: CustomEnum,
     }
 
     #[test]
@@ -389,6 +410,13 @@ mod de_tests {
             ret
         );
     }
+
+    #[test]
+    fn from_bytes_custom_enum_struct() {
+        let v = [0x00, 0x00, 0x00, 0x03];
+        let ret: CustomEnumStruct = from_bytes(&v).unwrap();
+        assert_eq!(CustomEnumStruct { a: CustomEnum::C }, ret);
+    }
 }
 
 #[cfg(test)]
@@ -453,6 +481,25 @@ mod ser_tests {
     #[derive(Serialize)]
     struct VariableOpaqueArray {
         a: Vec<opaque::VariableArray>,
+    }
+
+    #[derive(Clone, Serialize)]
+    enum CustomEnum {
+        C = 3,
+    }
+
+    impl AsRef<i32> for CustomEnum {
+        fn as_ref(&self) -> &'static i32 {
+            match self {
+                CustomEnum::C => &3,
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct CustomEnumStruct {
+        #[serde(with = "primitive::signed32")]
+        a: CustomEnum,
     }
 
     #[test]
@@ -750,5 +797,12 @@ mod ser_tests {
             ],
             ret
         );
+    }
+
+    #[test]
+    fn from_bytes_custom_enum_struct() {
+        let v = CustomEnumStruct { a: CustomEnum::C };
+        let ret = to_bytes(&v).unwrap();
+        assert_eq!(vec![0x00, 0x00, 0x00, 0x03], ret);
     }
 }

@@ -10,6 +10,7 @@ use std::convert::TryFrom;
 #[derive(Clone, Default)]
 pub struct Config {
     pub remove_typedef: bool,
+    pub complement_enum_index: bool,
 }
 
 struct Context {
@@ -25,6 +26,17 @@ impl Context {
             constants: vec![],
             typedefs: vec![],
         }
+    }
+
+    pub fn is_enum_type(&self, ty: TypeSpecifier) -> bool {
+        if let TypeSpecifier::Identifier(name) = ty {
+            return self.typedefs.iter().any(|(_, def)| match def {
+                TypeDef::Enum(identifier, _) => &name == identifier,
+                _ => false,
+            });
+        }
+
+        false
     }
 
     pub fn resolve_const_value<'a, T>(&'a self, name: &str) -> Result<T, Error>
@@ -197,22 +209,34 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
 
     indexed.sort_by_key(|i| i.0);
 
+    let name_ident = upper_camel_case_ident(name);
+
     let mut values = vec![];
+    let mut as_ref_values = vec![];
+    let mut try_from_values = vec![];
     let mut default_value = None;
 
     let mut start: i32 = 0;
     for (end, assign) in indexed {
-        for index in start..end {
-            // enum は index でシリアライズするため存在しない値は補完する。
-            let reserved = format_ident!("_Reserved{}", index.to_string());
-            values.push(quote! {
-                #reserved = #index
-            });
+        if cxt.config.complement_enum_index {
+            for index in start..end {
+                // enum は index でシリアライズするため存在しない値は補完する。
+                let reserved = format_ident!("_Reserved{}", index.to_string());
+                values.push(quote! {
+                    #reserved = #index
+                });
+            }
         }
 
         let item_ident = upper_camel_case_ident(&assign.identifier);
         values.push(quote! {
             #item_ident = #end
+        });
+        as_ref_values.push(quote! {
+            #name_ident::#item_ident => &#end
+        });
+        try_from_values.push(quote! {
+            #end => Ok(#name_ident::#item_ident)
         });
 
         if default_value.is_none() {
@@ -222,7 +246,37 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         start = end + 1;
     }
 
-    let name_ident = upper_camel_case_ident(name);
+    let as_ref = if cxt.config.complement_enum_index {
+        quote! {}
+    } else {
+        quote! {
+            impl AsRef<i32> for #name_ident {
+                fn as_ref(&self) -> &'static i32 {
+                    match self {
+                        #(#as_ref_values),*
+                    }
+                }
+            }
+        }
+    };
+
+    let try_from = if cxt.config.complement_enum_index {
+        quote! {}
+    } else {
+        quote! {
+            impl TryFrom<i32> for #name_ident {
+                type Error = serde_xdr::error::Error;
+
+                fn try_from(v: i32) -> Result<Self, serde_xdr::error::Error> {
+                    match v {
+                        #(#try_from_values),*,
+                        _ => Err(serde_xdr::error::Error::Convert),
+                    }
+                }
+            }
+        }
+    };
+
     let default_value = default_value.unwrap();
     Ok(quote! {
         #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -236,6 +290,10 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
                 #name_ident::#default_value
             }
         }
+
+        #as_ref
+
+        #try_from
     })
 }
 
@@ -254,7 +312,15 @@ fn convert_struct_token(
         let derive = match opaque {
             OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
             OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
-            _ => quote! {},
+            _ => {
+                if !cxt.config.complement_enum_index
+                    && cxt.is_enum_type(declaration.type_specifier().unwrap())
+                {
+                    quote! { #[serde(with = "serde_xdr::primitive::signed32")] }
+                } else {
+                    quote! {}
+                }
+            }
         };
 
         if keyword::rust_reserved(&field_name) {
