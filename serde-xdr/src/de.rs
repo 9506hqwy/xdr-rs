@@ -19,7 +19,6 @@ struct Map<'a, 'de: 'a> {
 }
 
 struct Enum<'a, 'de: 'a> {
-    index: usize,
     de: &'a mut Deserializer<'de>,
 }
 
@@ -324,8 +323,7 @@ impl<'de, 'b> de::Deserializer<'de> for &'b mut Deserializer<'de> {
     where
         V: de::Visitor<'de>,
     {
-        let index = self.read_i32()?.try_into()?;
-        visitor.visit_enum(Enum::new(index, self))
+        visitor.visit_enum(Enum::new(self))
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -399,8 +397,8 @@ impl<'a, 'de> de::MapAccess<'de> for Map<'a, 'de> {
 }
 
 impl<'a, 'de> Enum<'a, 'de> {
-    fn new(index: usize, de: &'a mut Deserializer<'de>) -> Self {
-        Enum { index, de }
+    fn new(de: &'a mut Deserializer<'de>) -> Self {
+        Enum { de }
     }
 }
 
@@ -412,7 +410,8 @@ impl<'a, 'de> de::EnumAccess<'de> for Enum<'a, 'de> {
     where
         V: de::DeserializeSeed<'de>,
     {
-        let de: de::value::UsizeDeserializer<Self::Error> = self.index.into_deserializer();
+        let index: usize = self.de.read_i32()?.try_into().map_err(|_| Error::Convert)?;
+        let de: de::value::UsizeDeserializer<Self::Error> = index.into_deserializer();
         let v = seed.deserialize(de)?;
         Ok((v, self))
     }
