@@ -8,6 +8,13 @@ mod ser;
 pub use de::from_bytes;
 pub use ser::to_bytes;
 
+pub trait XdrIndexer {
+    type Error;
+
+    fn name_by_index(index: i32) -> Result<&'static str, Self::Error>;
+    fn index(&self) -> i32;
+}
+
 #[cfg(test)]
 mod de_tests {
     use super::*;

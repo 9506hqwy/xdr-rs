@@ -11,6 +11,7 @@ use std::convert::TryFrom;
 pub struct Config {
     pub remove_typedef: bool,
     pub complement_enum_index: bool,
+    pub complement_union_index: bool,
 }
 
 struct Context {
@@ -104,8 +105,19 @@ pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Erro
     let constants = constants_token(&cxt)?;
     let types = types_token(&cxt)?;
 
+    let use_stmts = if cxt.config.complement_union_index {
+        quote! {}
+    } else {
+        quote! {
+            use serde::ser::SerializeTuple;
+            use serde_xdr::XdrIndexer;
+            use serde_xdr_derive::XdrIndexer;
+        }
+    };
+
     let binding = quote! {
         use serde::{Deserialize, Serialize};
+        #use_stmts
 
         #(#constants)*
 
@@ -351,7 +363,10 @@ fn convert_struct_token(
 
 fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<TokenStream, Error> {
     let mut specs = vec![];
+    let mut xdr_union_name_by_index = vec![];
+    let mut xdr_union_index = vec![];
     let mut default_value = None;
+    let name_ident = upper_camel_case_ident(name);
 
     let cond_type = match &body.cond {
         Declaration::Variable(cond_type, _) => Ok(cond_type),
@@ -372,19 +387,30 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
 
             let mut sindex: u32 = 0;
             for (eindex, decl, value) in values {
-                for index in sindex..eindex {
-                    // enum は index でシリアライズするため存在しない値は補完する。
-                    let reserved = format_ident!("_Reserved{}", index.to_string());
-                    specs.push(quote! {
-                        #reserved
-                    });
+                if cxt.config.complement_union_index {
+                    for index in sindex..eindex {
+                        // enum は index でシリアライズするため存在しない値は補完する。
+                        let reserved = format_ident!("_Reserved{}", index.to_string());
+                        specs.push(quote! {
+                            #reserved
+                        });
+                    }
                 }
 
-                let (value, default) = convert_case_token(value, &decl, cxt)?;
+                let (variant, variant_arm, value, default) = convert_case_token(value, &decl, cxt)?;
                 specs.push(value);
                 if default_value.is_none() {
                     default_value = Some(default);
                 }
+
+                let index = eindex as i32;
+                xdr_union_name_by_index.push(quote! {
+                    #index => Ok(stringify!(#variant))
+                });
+
+                xdr_union_index.push(quote! {
+                    #name_ident::#variant_arm => #index
+                });
 
                 sindex = eindex + 1;
             }
@@ -398,16 +424,27 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 Some(case) => {
                     let value = case.values.iter().find(|v| v.is_false()).unwrap();
 
-                    let (value, default) = convert_case_token(value, &case.declaration, cxt)?;
+                    let (variant, variant_arm, value, default) =
+                        convert_case_token(value, &case.declaration, cxt)?;
                     specs.push(value);
                     if default_value.is_none() {
                         default_value = Some(default);
                     }
+
+                    xdr_union_name_by_index.push(quote! {
+                        0i32 => Ok(stringify!(#variant))
+                    });
+
+                    xdr_union_index.push(quote! {
+                        #name_ident::#variant_arm => 0i32
+                    });
                 }
                 _ => {
-                    specs.push(quote! {
-                        _Reserved0
-                    });
+                    if cxt.config.complement_union_index {
+                        specs.push(quote! {
+                            _Reserved0
+                        });
+                    }
                 }
             }
 
@@ -419,16 +456,27 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 Some(case) => {
                     let value = case.values.iter().find(|v| v.is_true()).unwrap();
 
-                    let (value, default) = convert_case_token(value, &case.declaration, cxt)?;
+                    let (variant, variant_arm, value, default) =
+                        convert_case_token(value, &case.declaration, cxt)?;
                     specs.push(value);
                     if default_value.is_none() {
                         default_value = Some(default);
                     }
+
+                    xdr_union_name_by_index.push(quote! {
+                        1i32 => Ok(stringify!(#variant))
+                    });
+
+                    xdr_union_index.push(quote! {
+                        #name_ident::#variant_arm => 1i32
+                    });
                 }
                 _ => {
-                    specs.push(quote! {
-                        _Reserved1
-                    });
+                    if cxt.config.complement_union_index {
+                        specs.push(quote! {
+                            _Reserved1
+                        });
+                    }
                 }
             }
         }
@@ -451,10 +499,38 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
         }
     }
 
-    let name_ident = upper_camel_case_ident(name);
+    let xdr_union = if cxt.config.complement_union_index {
+        quote! {}
+    } else {
+        quote! {
+            impl XdrIndexer for #name_ident {
+                type Error = ::serde_xdr::error::Error;
+
+                fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
+                    match index {
+                        #(#xdr_union_name_by_index),*,
+                        _ => Err(::serde_xdr::error::Error::Convert),
+                    }
+                }
+
+                fn index(&self) -> i32 {
+                    match self {
+                        #(#xdr_union_index),*,
+                    }
+                }
+            }
+        }
+    };
+
+    let derive = if cxt.config.complement_union_index {
+        quote! { #[derive(Clone, Debug, Deserialize, Serialize)] }
+    } else {
+        quote! { #[derive(Clone, Debug, XdrIndexer)] }
+    };
+
     let default_value = default_value.unwrap();
     Ok(quote! {
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #derive
         pub enum #name_ident {
             #(#specs),*
         }
@@ -464,6 +540,8 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 #name_ident::#default_value
             }
         }
+
+        #xdr_union
     })
 }
 
@@ -573,7 +651,7 @@ fn convert_case_token(
     value: &Value,
     declaration: &Declaration,
     cxt: &Context,
-) -> Result<(TokenStream, TokenStream), Error> {
+) -> Result<(TokenStream, TokenStream, TokenStream, TokenStream), Error> {
     let value = convert_value_token::<u32>(value, true)?;
 
     let decl = convert_type_token(declaration, cxt)?;
@@ -589,11 +667,16 @@ fn convert_case_token(
             #value(#v_ty)
         };
         let default_token = quote! { #value(Default::default()) };
-        Ok((value_token, default_token))
+        Ok((
+            value.clone(),
+            quote! { #value(_) },
+            value_token,
+            default_token,
+        ))
     } else {
         let value_token = quote! { #value };
         let default_token = quote! { #value };
-        Ok((value_token, default_token))
+        Ok((value.clone(), value, value_token, default_token))
     }
 }
 

@@ -10,6 +10,7 @@ fn main() -> Result<(), Error> {
     let config = gen::Config {
         remove_typedef: true,
         complement_enum_index: false,
+        complement_union_index: false,
     };
 
     let decls = parser::parse(&source)?;

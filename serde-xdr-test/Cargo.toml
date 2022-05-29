@@ -1,0 +1,15 @@
+[package]
+name = "serde_xdr_test"
+version = "0.3.0"
+authors = ["9506hqwy"]
+edition = "2021"
+rust-version = "1.60"
+repository = "https://github.com/9506hqwy/xdr-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["xdr", "rfc4506"]
+categories = ["development-tools::testing"]
+
+[dev-dependencies]
+serde = { version="1.0.137", features=["derive"] }
+serde_xdr = { path="../serde-xdr" }
+serde_xdr_derive = { path="../serde-xdr-derive" }
