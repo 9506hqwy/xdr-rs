@@ -29,6 +29,15 @@ impl Context {
         }
     }
 
+    pub fn count_arms(&self, identifier: &str) -> usize {
+        let typedef = self.typedefs.iter().find(|(name, _)| name == identifier);
+        if let Some((_, TypeDef::Enum(_, assigns))) = typedef {
+            assigns.len()
+        } else {
+            0
+        }
+    }
+
     pub fn is_enum_type(&self, ty: TypeSpecifier) -> bool {
         if let TypeSpecifier::Identifier(name) = ty {
             return self.typedefs.iter().any(|(_, def)| match def {
@@ -373,6 +382,12 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
         _ => Err(Error::NotSupported),
     }?;
 
+    let arms_count = match cond_type {
+        TypeSpecifier::Identifier(identifier) => cxt.count_arms(identifier),
+        TypeSpecifier::Bool => 2,
+        _ => 0,
+    };
+
     match cond_type {
         TypeSpecifier::Int(_) | TypeSpecifier::Identifier(_) => {
             let mut values = vec![];
@@ -502,10 +517,16 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
     let xdr_union = if cxt.config.complement_union_index {
         quote! {}
     } else {
-        let default_arm = if body.default.is_some() {
+        let xdr_union_name_by_index_default_arm = if body.default.is_some() {
             quote! { _ => Ok(stringify!(Default)) }
         } else {
             quote! { _ => Err(::serde_xdr::error::Error::Convert) }
+        };
+
+        let xdr_union_index_default_arm = if arms_count == xdr_union_index.len() {
+            quote! {}
+        } else {
+            quote! { _ => unimplemented!() }
         };
 
         quote! {
@@ -515,14 +536,14 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
                     match index {
                         #(#xdr_union_name_by_index),*,
-                        #default_arm,
+                        #xdr_union_name_by_index_default_arm,
                     }
                 }
 
                 fn index(&self) -> i32 {
                     match self {
                         #(#xdr_union_index),*,
-                        _ => unimplemented!(),
+                        #xdr_union_index_default_arm
                     }
                 }
             }
