@@ -655,11 +655,17 @@ fn convert_case_token(
     let value = convert_value_token::<u32>(value, true)?;
 
     let decl = convert_type_token(declaration, cxt)?;
-    if let Some((v_ty, opaque)) = &decl {
-        let derive = match opaque {
-            OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
-            OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
-            _ => quote! {},
+    if let Some((mut v_ty, opaque)) = decl {
+        let derive = if opaque != OpaqueType::None && !cxt.config.complement_union_index {
+            // XdrUnion を使用する場合は serde 属性が使用できないのでラッパオブジェクトを使用する。
+            v_ty = quote! { serde_xdr::opaque::VariableArray };
+            quote! {}
+        } else {
+            match opaque {
+                OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
+                OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
+                _ => quote! {},
+            }
         };
 
         let value_token = quote! {
