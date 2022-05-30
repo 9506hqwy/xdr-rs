@@ -516,6 +516,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 fn index(&self) -> i32 {
                     match self {
                         #(#xdr_union_index),*,
+                        _ => unimplemented!(),
                     }
                 }
             }
