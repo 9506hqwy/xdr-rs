@@ -502,6 +502,12 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
     let xdr_union = if cxt.config.complement_union_index {
         quote! {}
     } else {
+        let default_arm = if body.default.is_some() {
+            quote! { _ => Ok(stringify!(Default)) }
+        } else {
+            quote! { _ => Err(::serde_xdr::error::Error::Convert) }
+        };
+
         quote! {
             impl XdrIndexer for #name_ident {
                 type Error = ::serde_xdr::error::Error;
@@ -509,7 +515,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
                     match index {
                         #(#xdr_union_name_by_index),*,
-                        _ => Err(::serde_xdr::error::Error::Convert),
+                        #default_arm,
                     }
                 }
 
