@@ -1,16 +1,36 @@
+use clap::{Arg, Command};
 use rpcgen::{gen, parser};
-use std::env;
 use std::fs;
 use std::io;
 
 fn main() -> Result<(), Error> {
-    let path = env::args().nth(1).ok_or(Error::Arg)?;
+    let matches = Command::new("Code Generation")
+        .version("0.3.0")
+        .arg(
+            Arg::new("path")
+                .value_name("PATH")
+                .required(true)
+                .help("protocol file."),
+        )
+        .arg(
+            Arg::new("use-std-trait")
+                .long("use-std-trait")
+                .takes_value(false),
+        )
+        .arg(
+            Arg::new("use-extra-trait")
+                .long("use-extra-trait")
+                .takes_value(false),
+        )
+        .get_matches();
+
+    let path = matches.value_of("path").unwrap();
     let source = fs::read_to_string(&path)?;
 
     let config = gen::Config {
         remove_typedef: true,
-        complement_enum_index: false,
-        complement_union_index: false,
+        complement_enum_index: !matches.is_present("use-std-trait"),
+        complement_union_index: !matches.is_present("use-extra-trait"),
     };
 
     let decls = parser::parse(&source)?;
@@ -23,7 +43,6 @@ fn main() -> Result<(), Error> {
 
 #[derive(Debug)]
 enum Error {
-    Arg,
     Io(io::Error),
     RpcGen(rpcgen::error::Error),
 }
