@@ -30,15 +30,6 @@ impl Context {
         }
     }
 
-    pub fn count_arms(&self, identifier: &str) -> usize {
-        let typedef = self.typedefs.iter().find(|(name, _)| name == identifier);
-        if let Some((_, TypeDef::Enum(_, assigns))) = typedef {
-            assigns.len()
-        } else {
-            0
-        }
-    }
-
     pub fn is_enum_type(&self, ty: TypeSpecifier) -> bool {
         if let TypeSpecifier::Identifier(name) = ty {
             return self.typedefs.iter().any(|(_, def)| match def {
@@ -430,12 +421,6 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
         _ => Err(Error::NotSupported),
     }?;
 
-    let arms_count = match cond_type {
-        TypeSpecifier::Identifier(identifier) => cxt.count_arms(identifier),
-        TypeSpecifier::Bool => 2,
-        _ => 0,
-    };
-
     match cond_type {
         TypeSpecifier::Int(_) | TypeSpecifier::Identifier(_) => {
             let mut values = vec![];
@@ -571,7 +556,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
             quote! { _ => Err(::serde_xdr::error::Error::Convert) }
         };
 
-        let xdr_union_index_default_arm = if arms_count == xdr_union_index.len() {
+        let xdr_union_index_default_arm = if body.default.is_none() {
             quote! {}
         } else {
             quote! { _ => unimplemented!() }
