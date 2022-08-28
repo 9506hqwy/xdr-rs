@@ -1,6 +1,6 @@
 [package]
 name = "serde_xdr_derive"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["9506hqwy"]
 edition = "2021"
 rust-version = "1.60"
