@@ -11,6 +11,7 @@ use std::convert::TryFrom;
 pub struct Config {
     pub remove_typedef: bool,
     pub complement_enum_index: bool,
+    pub enum_impl_indexer: bool,
     pub complement_union_index: bool,
 }
 
@@ -114,7 +115,7 @@ pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Erro
     let constants = constants_token(&cxt)?;
     let types = types_token(&cxt)?;
 
-    let use_stmts = if cxt.config.complement_union_index {
+    let use_stmts = if !cxt.config.enum_impl_indexer && cxt.config.complement_union_index {
         quote! {}
     } else {
         quote! {
@@ -235,6 +236,8 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
     let mut values = vec![];
     let mut as_ref_values = vec![];
     let mut try_from_values = vec![];
+    let mut xdr_union_index = vec![];
+    let mut xdr_union_name_by_index = vec![];
     let mut default_value = None;
 
     let mut start: i32 = 0;
@@ -259,6 +262,12 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         try_from_values.push(quote! {
             #end => Ok(#name_ident::#item_ident)
         });
+        xdr_union_index.push(quote! {
+            #name_ident::#item_ident => #end
+        });
+        xdr_union_name_by_index.push(quote! {
+            #end => Ok(stringify!(#item_ident))
+        });
 
         if default_value.is_none() {
             default_value = Some(quote! { #item_ident });
@@ -267,7 +276,7 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         start = end + 1;
     }
 
-    let as_ref = if cxt.config.complement_enum_index {
+    let as_ref = if cxt.config.complement_enum_index || cxt.config.enum_impl_indexer {
         quote! {}
     } else {
         quote! {
@@ -281,7 +290,7 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         }
     };
 
-    let try_from = if cxt.config.complement_enum_index {
+    let try_from = if cxt.config.complement_enum_index || cxt.config.enum_impl_indexer {
         quote! {}
     } else {
         quote! {
@@ -298,9 +307,45 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         }
     };
 
+    let indexer = if cxt.config.complement_enum_index {
+        quote! {}
+    } else if cxt.config.enum_impl_indexer {
+        let xdr_union_name_by_index_default_arm = match default_value {
+            Some(ref v) => quote! { _ => Ok(stringify!(#v)) },
+            _ => quote! { _ => Err(::serde_xdr::error::Error::Convert) },
+        };
+
+        quote! {
+            impl XdrIndexer for #name_ident {
+                type Error = ::serde_xdr::error::Error;
+
+                fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
+                    match index {
+                        #(#xdr_union_name_by_index),*,
+                        #xdr_union_name_by_index_default_arm,
+                    }
+                }
+
+                fn index(&self) -> i32 {
+                    match self {
+                        #(#xdr_union_index),*,
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let derive = if cxt.config.enum_impl_indexer {
+        quote! { #[derive(Clone, Debug, PartialEq, XdrIndexer)] }
+    } else {
+        quote! { #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)] }
+    };
+
     let default_value = default_value.unwrap();
     Ok(quote! {
-        #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+        #derive
         #[repr(i32)]
         pub enum #name_ident {
             #(#values),*
@@ -315,6 +360,8 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         #as_ref
 
         #try_from
+
+        #indexer
     })
 }
 
@@ -335,6 +382,7 @@ fn convert_struct_token(
             OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
             _ => {
                 if !cxt.config.complement_enum_index
+                    && !cxt.config.enum_impl_indexer
                     && cxt.is_enum_type(declaration.type_specifier().unwrap())
                 {
                     quote! { #[serde(with = "serde_xdr::primitive::signed32")] }

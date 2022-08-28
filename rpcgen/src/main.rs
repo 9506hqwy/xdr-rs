@@ -22,15 +22,27 @@ fn main() -> Result<(), Error> {
                 .long("use-extra-trait")
                 .takes_value(false),
         )
+        .arg(
+            Arg::new("use-indexer")
+                .long("use-indexer")
+                .takes_value(false),
+        )
         .get_matches();
 
     let path = matches.value_of("path").unwrap();
     let source = fs::read_to_string(&path)?;
 
+    let complement_enum_index =
+        !matches.is_present("use-std-trait") && !matches.is_present("use-indexer");
+    let enum_impl_indexer = matches.is_present("use-indexer");
+    let complement_union_index =
+        !matches.is_present("use-extra-trait") && !matches.is_present("use-indexer");
+
     let config = gen::Config {
         remove_typedef: true,
-        complement_enum_index: !matches.is_present("use-std-trait"),
-        complement_union_index: !matches.is_present("use-extra-trait"),
+        complement_enum_index,
+        enum_impl_indexer,
+        complement_union_index,
     };
 
     let decls = parser::parse(&source)?;
