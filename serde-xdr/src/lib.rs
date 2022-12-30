@@ -15,6 +15,12 @@ pub trait XdrIndexer {
     fn index(&self) -> i32;
 }
 
+pub trait XdrUnion<T> {
+    type Error;
+
+    fn name_by_value(value: &T) -> Result<&'static str, Self::Error>;
+}
+
 #[cfg(test)]
 mod de_tests {
     use super::*;
