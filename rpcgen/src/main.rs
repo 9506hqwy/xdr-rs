@@ -32,17 +32,16 @@ fn main() -> Result<(), Error> {
     let path = matches.value_of("path").unwrap();
     let source = fs::read_to_string(&path)?;
 
-    let complement_enum_index =
-        !matches.is_present("use-std-trait") && !matches.is_present("use-indexer");
-    let enum_impl_indexer = matches.is_present("use-indexer");
-    let complement_union_index =
-        !matches.is_present("use-extra-trait") && !matches.is_present("use-indexer");
+    let enum_impl_std_trait = matches.is_present("use-std-trait");
+    let enum_impl_indexer = !enum_impl_std_trait && matches.is_present("use-indexer");
+    let union_impl_indexer =
+        matches.is_present("use-extra-trait") || matches.is_present("use-indexer");
 
     let config = gen::Config {
         remove_typedef: true,
-        complement_enum_index,
         enum_impl_indexer,
-        complement_union_index,
+        enum_impl_std_trait,
+        union_impl_indexer,
     };
 
     let decls = parser::parse(&source)?;

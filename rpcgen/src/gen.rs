@@ -10,9 +10,19 @@ use std::convert::TryFrom;
 #[derive(Clone, Default)]
 pub struct Config {
     pub remove_typedef: bool,
-    pub complement_enum_index: bool,
     pub enum_impl_indexer: bool,
-    pub complement_union_index: bool,
+    pub enum_impl_std_trait: bool,
+    pub union_impl_indexer: bool,
+}
+
+impl Config {
+    pub fn enum_complement_index(&self) -> bool {
+        !self.enum_impl_indexer && !self.enum_impl_std_trait
+    }
+
+    pub fn union_complement_index(&self) -> bool {
+        !self.union_impl_indexer
+    }
 }
 
 struct Context {
@@ -106,14 +116,14 @@ pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Erro
     let constants = constants_token(&cxt)?;
     let types = types_token(&cxt)?;
 
-    let use_stmts = if !cxt.config.enum_impl_indexer && cxt.config.complement_union_index {
-        quote! {}
-    } else {
+    let use_stmts = if cxt.config.enum_impl_indexer || cxt.config.union_impl_indexer {
         quote! {
             use serde::ser::SerializeTuple;
             use serde_xdr::XdrIndexer;
             use serde_xdr_derive::XdrIndexer;
         }
+    } else {
+        quote! {}
     };
 
     let binding = quote! {
@@ -233,7 +243,7 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
 
     let mut start: i32 = 0;
     for (end, assign) in indexed {
-        if cxt.config.complement_enum_index {
+        if cxt.config.enum_complement_index() {
             for index in start..end {
                 // enum は index でシリアライズするため存在しない値は補完する。
                 let reserved = format_ident!("_Reserved{}", index.to_string());
@@ -267,9 +277,7 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         start = end + 1;
     }
 
-    let as_ref = if cxt.config.complement_enum_index || cxt.config.enum_impl_indexer {
-        quote! {}
-    } else {
+    let as_ref = if cxt.config.enum_impl_std_trait {
         quote! {
             impl AsRef<i32> for #name_ident {
                 fn as_ref(&self) -> &'static i32 {
@@ -279,11 +287,11 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
                 }
             }
         }
+    } else {
+        quote! {}
     };
 
-    let try_from = if cxt.config.complement_enum_index || cxt.config.enum_impl_indexer {
-        quote! {}
-    } else {
+    let try_from = if cxt.config.enum_impl_std_trait {
         quote! {
             impl TryFrom<i32> for #name_ident {
                 type Error = serde_xdr::error::Error;
@@ -296,11 +304,11 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
                 }
             }
         }
+    } else {
+        quote! {}
     };
 
-    let indexer = if cxt.config.complement_enum_index {
-        quote! {}
-    } else if cxt.config.enum_impl_indexer {
+    let indexer = if cxt.config.enum_impl_indexer {
         let xdr_indexer_name_by_index_default_arm = match default_value {
             Some(ref v) => quote! { _ => Ok(stringify!(#v)) },
             _ => quote! { _ => Err(::serde_xdr::error::Error::Convert) },
@@ -372,8 +380,7 @@ fn convert_struct_token(
             OpaqueType::Fixed => quote! { #[serde(with = "serde_xdr::opaque::fixed")] },
             OpaqueType::Variable => quote! { #[serde(with = "serde_xdr::opaque::variable")] },
             _ => {
-                if !cxt.config.complement_enum_index
-                    && !cxt.config.enum_impl_indexer
+                if cxt.config.enum_impl_std_trait
                     && cxt.is_enum_type(declaration.type_specifier().unwrap())
                 {
                     quote! { #[serde(with = "serde_xdr::primitive::signed32")] }
@@ -435,7 +442,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
 
             let mut sindex: u32 = 0;
             for (eindex, decl, value) in values {
-                if cxt.config.complement_union_index {
+                if cxt.config.union_complement_index() {
                     for index in sindex..eindex {
                         // enum は index でシリアライズするため存在しない値は補完する。
                         let reserved = format_ident!("_Reserved{}", index.to_string());
@@ -488,7 +495,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                     });
                 }
                 _ => {
-                    if cxt.config.complement_union_index {
+                    if cxt.config.union_complement_index() {
                         specs.push(quote! {
                             _Reserved0
                         });
@@ -520,7 +527,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                     });
                 }
                 _ => {
-                    if cxt.config.complement_union_index {
+                    if cxt.config.union_complement_index() {
                         specs.push(quote! {
                             _Reserved1
                         });
@@ -547,9 +554,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
         }
     }
 
-    let xdr_indexer = if cxt.config.complement_union_index {
-        quote! {}
-    } else {
+    let xdr_indexer = if cxt.config.union_impl_indexer {
         let xdr_indexer_name_by_index_default_arm = if body.default.is_some() {
             quote! { _ => Ok(stringify!(Default)) }
         } else {
@@ -581,9 +586,11 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 }
             }
         }
+    } else {
+        quote! {}
     };
 
-    let derive = if cxt.config.complement_union_index {
+    let derive = if cxt.config.union_complement_index() {
         quote! { #[derive(Clone, Debug, Deserialize, Serialize)] }
     } else {
         quote! { #[derive(Clone, Debug, XdrIndexer)] }
@@ -717,7 +724,7 @@ fn convert_case_token(
 
     let decl = convert_type_token(declaration, cxt)?;
     if let Some((mut v_ty, opaque)) = decl {
-        let derive = if opaque != OpaqueType::None && !cxt.config.complement_union_index {
+        let derive = if opaque != OpaqueType::None && !cxt.config.union_complement_index() {
             // XdrIndexer を使用する場合は serde 属性が使用できないのでラッパオブジェクトを使用する。
             v_ty = quote! { serde_xdr::opaque::VariableArray };
             quote! {}
