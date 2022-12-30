@@ -43,7 +43,7 @@ XDR enumeration and union is mapped to bellow pattern rust code.
 enum { RED = 2, YELLOW = 3, BLUE = 5 } colors;
 ```
 
-1. Compliments name-identifier.
+1. Complements name-identifier.
 
    ```rust
    #[derive(Deserialize, Serialize)]
@@ -129,7 +129,7 @@ enum { RED = 2, YELLOW = 3, BLUE = 5 } colors;
 rpcgen [--use-std-trait] [--use-extra-trait] [--use-indexer] <PATH>
 ```
 
-PATH is intetface defined file path.
+PATH is interface defined file path.
 
 If `--use-std-trait` is specified,
 XDR `enum` implements `TryFrom<i32>` and `#[serde(with = "serde_xdr::primitive::signed32")]` attribute.
