@@ -227,8 +227,8 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
     let mut values = vec![];
     let mut as_ref_values = vec![];
     let mut try_from_values = vec![];
-    let mut xdr_union_index = vec![];
-    let mut xdr_union_name_by_index = vec![];
+    let mut xdr_indexer_index = vec![];
+    let mut xdr_indexer_name_by_index = vec![];
     let mut default_value = None;
 
     let mut start: i32 = 0;
@@ -253,10 +253,10 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
         try_from_values.push(quote! {
             #end => Ok(#name_ident::#item_ident)
         });
-        xdr_union_index.push(quote! {
+        xdr_indexer_index.push(quote! {
             #name_ident::#item_ident => #end
         });
-        xdr_union_name_by_index.push(quote! {
+        xdr_indexer_name_by_index.push(quote! {
             #end => Ok(stringify!(#item_ident))
         });
 
@@ -301,7 +301,7 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
     let indexer = if cxt.config.complement_enum_index {
         quote! {}
     } else if cxt.config.enum_impl_indexer {
-        let xdr_union_name_by_index_default_arm = match default_value {
+        let xdr_indexer_name_by_index_default_arm = match default_value {
             Some(ref v) => quote! { _ => Ok(stringify!(#v)) },
             _ => quote! { _ => Err(::serde_xdr::error::Error::Convert) },
         };
@@ -312,14 +312,14 @@ fn convert_enum_token(name: &str, assigns: &[Assign], cxt: &Context) -> Result<T
 
                 fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
                     match index {
-                        #(#xdr_union_name_by_index),*,
-                        #xdr_union_name_by_index_default_arm,
+                        #(#xdr_indexer_name_by_index),*,
+                        #xdr_indexer_name_by_index_default_arm,
                     }
                 }
 
                 fn index(&self) -> i32 {
                     match self {
-                        #(#xdr_union_index),*,
+                        #(#xdr_indexer_index),*,
                     }
                 }
             }
@@ -411,8 +411,8 @@ fn convert_struct_token(
 
 fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<TokenStream, Error> {
     let mut specs = vec![];
-    let mut xdr_union_name_by_index = vec![];
-    let mut xdr_union_index = vec![];
+    let mut xdr_indexer_name_by_index = vec![];
+    let mut xdr_indexer_index = vec![];
     let mut default_value = None;
     let name_ident = upper_camel_case_ident(name);
 
@@ -452,11 +452,11 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 }
 
                 let index = eindex as i32;
-                xdr_union_name_by_index.push(quote! {
+                xdr_indexer_name_by_index.push(quote! {
                     #index => Ok(stringify!(#variant))
                 });
 
-                xdr_union_index.push(quote! {
+                xdr_indexer_index.push(quote! {
                     #name_ident::#variant_arm => #index
                 });
 
@@ -479,11 +479,11 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                         default_value = Some(default);
                     }
 
-                    xdr_union_name_by_index.push(quote! {
+                    xdr_indexer_name_by_index.push(quote! {
                         0i32 => Ok(stringify!(#variant))
                     });
 
-                    xdr_union_index.push(quote! {
+                    xdr_indexer_index.push(quote! {
                         #name_ident::#variant_arm => 0i32
                     });
                 }
@@ -511,11 +511,11 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                         default_value = Some(default);
                     }
 
-                    xdr_union_name_by_index.push(quote! {
+                    xdr_indexer_name_by_index.push(quote! {
                         1i32 => Ok(stringify!(#variant))
                     });
 
-                    xdr_union_index.push(quote! {
+                    xdr_indexer_index.push(quote! {
                         #name_ident::#variant_arm => 1i32
                     });
                 }
@@ -547,16 +547,16 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
         }
     }
 
-    let xdr_union = if cxt.config.complement_union_index {
+    let xdr_indexer = if cxt.config.complement_union_index {
         quote! {}
     } else {
-        let xdr_union_name_by_index_default_arm = if body.default.is_some() {
+        let xdr_indexer_name_by_index_default_arm = if body.default.is_some() {
             quote! { _ => Ok(stringify!(Default)) }
         } else {
             quote! { _ => Err(::serde_xdr::error::Error::Convert) }
         };
 
-        let xdr_union_index_default_arm = if body.default.is_none() {
+        let xdr_indexer_index_default_arm = if body.default.is_none() {
             quote! {}
         } else {
             quote! { _ => unimplemented!() }
@@ -568,15 +568,15 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
 
                 fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
                     match index {
-                        #(#xdr_union_name_by_index),*,
-                        #xdr_union_name_by_index_default_arm,
+                        #(#xdr_indexer_name_by_index),*,
+                        #xdr_indexer_name_by_index_default_arm,
                     }
                 }
 
                 fn index(&self) -> i32 {
                     match self {
-                        #(#xdr_union_index),*,
-                        #xdr_union_index_default_arm
+                        #(#xdr_indexer_index),*,
+                        #xdr_indexer_index_default_arm
                     }
                 }
             }
@@ -602,7 +602,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
             }
         }
 
-        #xdr_union
+        #xdr_indexer
     })
 }
 
@@ -718,7 +718,7 @@ fn convert_case_token(
     let decl = convert_type_token(declaration, cxt)?;
     if let Some((mut v_ty, opaque)) = decl {
         let derive = if opaque != OpaqueType::None && !cxt.config.complement_union_index {
-            // XdrUnion を使用する場合は serde 属性が使用できないのでラッパオブジェクトを使用する。
+            // XdrIndexer を使用する場合は serde 属性が使用できないのでラッパオブジェクトを使用する。
             v_ty = quote! { serde_xdr::opaque::VariableArray };
             quote! {}
         } else {

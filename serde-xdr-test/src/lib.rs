@@ -12,14 +12,14 @@ mod tests {
     }
 
     #[derive(Clone, Debug, XdrIndexer, PartialEq)]
-    enum Union {
+    enum Indexer {
         A,
         B(u8),
         C(i32, u32),
         D(Struct),
     }
 
-    impl serde_xdr::XdrIndexer for Union {
+    impl serde_xdr::XdrIndexer for Indexer {
         type Error = serde_xdr::error::Error;
 
         fn name_by_index(index: i32) -> Result<&'static str, Self::Error> {
@@ -34,17 +34,17 @@ mod tests {
 
         fn index(&self) -> i32 {
             match self {
-                Union::A => 1,
-                Union::B(_) => 3,
-                Union::C(_, _) => 5,
-                Union::D(_) => 7,
+                Indexer::A => 1,
+                Indexer::B(_) => 3,
+                Indexer::C(_, _) => 5,
+                Indexer::D(_) => 7,
             }
         }
     }
 
     #[test]
-    fn xdr_union_unit_variant() {
-        let v = Union::A;
+    fn xdr_indexer_unit_variant() {
+        let v = Indexer::A;
         let ret = serde_xdr::to_bytes(&v).unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x01], ret);
 
@@ -53,8 +53,8 @@ mod tests {
     }
 
     #[test]
-    fn xdr_union_newtype_variant() {
-        let v = Union::B(11);
+    fn xdr_indexer_newtype_variant() {
+        let v = Indexer::B(11);
         let ret = serde_xdr::to_bytes(&v).unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x0B], ret);
 
@@ -63,8 +63,8 @@ mod tests {
     }
 
     #[test]
-    fn xdr_union_tuple_variant() {
-        let v = Union::C(-1, 2);
+    fn xdr_indexer_tuple_variant() {
+        let v = Indexer::C(-1, 2);
         let ret = serde_xdr::to_bytes(&v).unwrap();
         assert_eq!(
             vec![0x00, 0x00, 0x00, 0x05, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x02],
@@ -76,8 +76,8 @@ mod tests {
     }
 
     #[test]
-    fn xdr_union_struct_variant() {
-        let v = Union::D(Struct { f0: 1 });
+    fn xdr_indexer_struct_variant() {
+        let v = Indexer::D(Struct { f0: 1 });
         let ret = serde_xdr::to_bytes(&v).unwrap();
         assert_eq!(vec![0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01], ret);
 

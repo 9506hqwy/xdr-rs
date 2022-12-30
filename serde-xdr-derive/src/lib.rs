@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::{parse, Fields, ItemEnum};
 
 #[proc_macro_derive(XdrIndexer)]
-pub fn xdr_union(input: TokenStream) -> TokenStream {
+pub fn xdr_indexer(input: TokenStream) -> TokenStream {
     let ast: ItemEnum = parse(input).unwrap();
 
     let ident = &ast.ident;
