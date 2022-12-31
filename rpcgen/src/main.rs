@@ -27,6 +27,7 @@ fn main() -> Result<(), Error> {
                 .long("use-indexer")
                 .takes_value(false),
         )
+        .arg(Arg::new("use-union").long("use-union").takes_value(false))
         .get_matches();
 
     let path = matches.value_of("path").unwrap();
@@ -34,14 +35,16 @@ fn main() -> Result<(), Error> {
 
     let enum_impl_std_trait = matches.is_present("use-std-trait");
     let enum_impl_indexer = !enum_impl_std_trait && matches.is_present("use-indexer");
-    let union_impl_indexer =
-        matches.is_present("use-extra-trait") || matches.is_present("use-indexer");
+    let union_impl_union = matches.is_present("use-union");
+    let union_impl_indexer = !union_impl_union
+        && (matches.is_present("use-extra-trait") || matches.is_present("use-indexer"));
 
     let config = gen::Config {
         remove_typedef: true,
         enum_impl_indexer,
         enum_impl_std_trait,
         union_impl_indexer,
+        union_impl_union,
     };
 
     let decls = parser::parse(&source)?;
