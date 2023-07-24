@@ -15,29 +15,29 @@ fn main() -> Result<(), Error> {
         .arg(
             Arg::new("use-std-trait")
                 .long("use-std-trait")
-                .takes_value(false),
+                .num_args(0),
         )
         .arg(
             Arg::new("use-extra-trait")
                 .long("use-extra-trait")
-                .takes_value(false),
+                .num_args(0),
         )
         .arg(
             Arg::new("use-indexer")
                 .long("use-indexer")
-                .takes_value(false),
+                .num_args(0),
         )
-        .arg(Arg::new("use-union").long("use-union").takes_value(false))
+        .arg(Arg::new("use-union").long("use-union").num_args(0))
         .get_matches();
 
-    let path = matches.value_of("path").unwrap();
+    let path = matches.get_one::<String>("path").unwrap();
     let source = fs::read_to_string(&path)?;
 
-    let enum_impl_std_trait = matches.is_present("use-std-trait");
-    let enum_impl_indexer = !enum_impl_std_trait && matches.is_present("use-indexer");
-    let union_impl_union = matches.is_present("use-union");
+    let enum_impl_std_trait = matches.contains_id("use-std-trait");
+    let enum_impl_indexer = !enum_impl_std_trait && matches.contains_id("use-indexer");
+    let union_impl_union = matches.contains_id("use-union");
     let union_impl_indexer = !union_impl_union
-        && (matches.is_present("use-extra-trait") || matches.is_present("use-indexer"));
+        && (matches.contains_id("use-extra-trait") || matches.contains_id("use-indexer"));
 
     let config = gen::Config {
         remove_typedef: true,
