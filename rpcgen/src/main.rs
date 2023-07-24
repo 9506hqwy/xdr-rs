@@ -33,11 +33,11 @@ fn main() -> Result<(), Error> {
     let path = matches.get_one::<String>("path").unwrap();
     let source = fs::read_to_string(&path)?;
 
-    let enum_impl_std_trait = matches.contains_id("use-std-trait");
-    let enum_impl_indexer = !enum_impl_std_trait && matches.contains_id("use-indexer");
-    let union_impl_union = matches.contains_id("use-union");
+    let enum_impl_std_trait = matches.get_flag("use-std-trait");
+    let enum_impl_indexer = !enum_impl_std_trait && matches.get_flag("use-indexer");
+    let union_impl_union = matches.get_flag("use-union");
     let union_impl_indexer = !union_impl_union
-        && (matches.contains_id("use-extra-trait") || matches.contains_id("use-indexer"));
+        && (matches.get_flag("use-extra-trait") || matches.get_flag("use-indexer"));
 
     let config = gen::Config {
         remove_typedef: true,
