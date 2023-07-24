@@ -10,7 +10,7 @@ keywords = ["xdr", "rfc4506"]
 categories = ["development-tools"]
 
 [dependencies]
-clap = "3.1.18"
+clap = "4.3.19"
 nom = "7.1.1"
 proc-macro2 = "1.0.37"
 quote = "1.0.18"
