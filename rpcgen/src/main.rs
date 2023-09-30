@@ -12,21 +12,13 @@ fn main() -> Result<(), Error> {
                 .required(true)
                 .help("protocol file."),
         )
-        .arg(
-            Arg::new("use-std-trait")
-                .long("use-std-trait")
-                .num_args(0),
-        )
+        .arg(Arg::new("use-std-trait").long("use-std-trait").num_args(0))
         .arg(
             Arg::new("use-extra-trait")
                 .long("use-extra-trait")
                 .num_args(0),
         )
-        .arg(
-            Arg::new("use-indexer")
-                .long("use-indexer")
-                .num_args(0),
-        )
+        .arg(Arg::new("use-indexer").long("use-indexer").num_args(0))
         .arg(Arg::new("use-union").long("use-union").num_args(0))
         .get_matches();
 

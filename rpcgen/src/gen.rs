@@ -501,7 +501,6 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
 
                 xdr_union_cond_type = Some(tmp_type);
             }
-
         }
         TypeSpecifier::Bool => {
             let false_case = body
@@ -806,7 +805,16 @@ fn convert_case_token(
     declaration: &Declaration,
     cond_type_spec: &TypeSpecifier,
     cxt: &Context,
-) -> Result<(TokenStream, TokenStream, TokenStream, TokenStream, TokenStream), Error> {
+) -> Result<
+    (
+        TokenStream,
+        TokenStream,
+        TokenStream,
+        TokenStream,
+        TokenStream,
+    ),
+    Error,
+> {
     let value = convert_value_token::<u32>(value, true)?;
     let cond_type = match convert_primitive_token(cond_type_spec, cxt) {
         Ok((ty, _)) => ty,
