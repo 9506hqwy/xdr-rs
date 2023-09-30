@@ -1,16 +1,14 @@
 [package]
 name = "serde_xdr"
-version = "0.5.0"
-authors = ["9506hqwy"]
-edition = "2021"
-rust-version = "1.60"
-repository = "https://github.com/9506hqwy/xdr-rs"
-license = "MIT OR Apache-2.0"
 keywords = ["xdr", "rfc4506"]
 categories = ["encoding"]
 
-[dependencies]
-serde = "1.0.137"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
 
-[dev-dependencies]
+[dependencies]
 serde = { version="1.0.137", features=["derive"] }
