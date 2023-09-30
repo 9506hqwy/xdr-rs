@@ -2,7 +2,7 @@
 mod tests {
     use serde::ser::SerializeTuple;
     use serde::{Deserialize, Serialize};
-    use serde_xdr;
+
     use serde_xdr::{XdrIndexer, XdrUnion};
     use serde_xdr_derive::{XdrIndexer, XdrUnion};
 

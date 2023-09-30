@@ -466,7 +466,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                 }
 
                 let (variant, variant_arm, value, default, tmp_type) =
-                    convert_case_token(value_token, &decl, &cond_type, cxt)?;
+                    convert_case_token(value_token, &decl, cond_type, cxt)?;
                 specs.push(value);
                 if default_value.is_none() {
                     default_value = Some(default);
@@ -512,7 +512,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                     let value = case.values.iter().find(|v| v.is_false()).unwrap();
 
                     let (variant, variant_arm, value, default, _) =
-                        convert_case_token(value, &case.declaration, &cond_type, cxt)?;
+                        convert_case_token(value, &case.declaration, cond_type, cxt)?;
                     specs.push(value);
                     if default_value.is_none() {
                         default_value = Some(default);
@@ -548,7 +548,7 @@ fn convert_union_token(name: &str, body: &UnionBody, cxt: &Context) -> Result<To
                     let value = case.values.iter().find(|v| v.is_true()).unwrap();
 
                     let (variant, variant_arm, value, default, _) =
-                        convert_case_token(value, &case.declaration, &cond_type, cxt)?;
+                        convert_case_token(value, &case.declaration, cond_type, cxt)?;
                     specs.push(value);
                     if default_value.is_none() {
                         default_value = Some(default);

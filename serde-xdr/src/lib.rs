@@ -108,11 +108,11 @@ mod de_tests {
     fn from_bytes_bool() {
         let v = [0x00, 0x00, 0x00, 0x00];
         let ret: bool = from_bytes(&v).unwrap();
-        assert_eq!(false, ret);
+        assert!(!ret);
 
         let v = [0x00, 0x00, 0x00, 0x01];
         let ret: bool = from_bytes(&v).unwrap();
-        assert_eq!(true, ret);
+        assert!(ret);
     }
 
     #[test]

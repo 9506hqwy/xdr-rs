@@ -23,7 +23,7 @@ fn main() -> Result<(), Error> {
         .get_matches();
 
     let path = matches.get_one::<String>("path").unwrap();
-    let source = fs::read_to_string(&path)?;
+    let source = fs::read_to_string(path)?;
 
     let enum_impl_std_trait = matches.get_flag("use-std-trait");
     let enum_impl_indexer = !enum_impl_std_trait && matches.get_flag("use-indexer");

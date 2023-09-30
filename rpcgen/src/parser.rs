@@ -1285,7 +1285,7 @@ void;",
     #[test]
     fn identifier_err() {
         let err = identifier("1a").err().is_some();
-        assert_eq!(true, err);
+        assert!(err);
     }
 
     #[test]
