@@ -18,7 +18,7 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "error: {:?}", self)
+        write!(f, "error: {self:?}")
     }
 }
 
@@ -29,7 +29,7 @@ impl de::Error for Error {
     where
         T: fmt::Display,
     {
-        Error::Custom(format!("{}", msg))
+        Error::Custom(format!("{msg}"))
     }
 }
 
@@ -38,7 +38,7 @@ impl ser::Error for Error {
     where
         T: fmt::Display,
     {
-        Error::Custom(format!("{}", msg))
+        Error::Custom(format!("{msg}"))
     }
 }
 

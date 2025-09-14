@@ -1,5 +1,5 @@
 use clap::{Arg, Command};
-use rpcgen::{gen, parser};
+use rpcgen::{gen_code, parser};
 use std::fs;
 use std::io;
 
@@ -31,7 +31,7 @@ fn main() -> Result<(), Error> {
     let union_impl_indexer = !union_impl_union
         && (matches.get_flag("use-extra-trait") || matches.get_flag("use-indexer"));
 
-    let config = gen::Config {
+    let config = gen_code::Config {
         remove_typedef: true,
         enum_impl_indexer,
         enum_impl_std_trait,
@@ -40,13 +40,14 @@ fn main() -> Result<(), Error> {
     };
 
     let decls = parser::parse(&source)?;
-    let bindings = gen::gen(decls, &config)?;
+    let bindings = gen_code::gen_code(decls, &config)?;
 
-    println!("{}", bindings);
+    println!("{bindings}");
 
     Ok(())
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum Error {
     Io(io::Error),

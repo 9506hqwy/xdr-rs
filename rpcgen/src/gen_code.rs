@@ -4,7 +4,7 @@ use crate::parser::{
     Assign, Constant, Declaration, Definition, TypeDef, TypeSpecifier, UnionBody, Value,
 };
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use std::convert::TryFrom;
 
 #[derive(Clone, Default)]
@@ -110,7 +110,7 @@ enum OpaqueType {
     Variable,
 }
 
-pub fn gen(definitions: Vec<Definition>, config: &Config) -> Result<String, Error> {
+pub fn gen_code(definitions: Vec<Definition>, config: &Config) -> Result<String, Error> {
     let mut cxt = Context::new(config);
     setup_context(&definitions, &mut cxt)?;
 
@@ -402,7 +402,7 @@ fn convert_struct_token(
         };
 
         if keyword::rust_reserved(&field_name) {
-            field_name = format!("r#{}", field_name);
+            field_name = format!("r#{field_name}");
         }
 
         let field_name_ident = snake_case_ident(&field_name);

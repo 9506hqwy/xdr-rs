@@ -105,7 +105,7 @@ impl<'de> Deserializer<'de> {
     }
 }
 
-impl<'de, 'b> de::Deserializer<'de> for &'b mut Deserializer<'de> {
+impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     type Error = Error;
 
     fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>

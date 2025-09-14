@@ -11,12 +11,12 @@ pub enum Error {
 
 impl From<num::ParseIntError> for Error {
     fn from(error: num::ParseIntError) -> Self {
-        Error::Parse(format!("{}", error))
+        Error::Parse(format!("{error}"))
     }
 }
 
 impl<'a> From<nom::Err<nom::error::Error<&'a str>>> for Error {
     fn from(error: nom::Err<nom::error::Error<&'a str>>) -> Self {
-        Error::Parse(format!("{}", error))
+        Error::Parse(format!("{error}"))
     }
 }

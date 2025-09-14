@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::keyword;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{
@@ -10,7 +11,6 @@ use nom::{
     combinator::{map, opt, peek, recognize, verify},
     multi::{many0, many1, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
-    IResult,
 };
 use std::convert::TryFrom;
 use std::str::FromStr;
@@ -65,7 +65,7 @@ impl<'a> Constant {
     where
         T: TryFrom<&'a Constant>,
     {
-        let n = T::try_from(self).map_err(|_| Error::Parse(format!("{:?}", self)))?;
+        let n = T::try_from(self).map_err(|_| Error::Parse(format!("{self:?}")))?;
         Ok(n)
     }
 }

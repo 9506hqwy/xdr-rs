@@ -32,14 +32,14 @@ let val: u8 = serde_xdr::from_bytes(bytes)?;
 | Void                        | unit, unit_struct                              |
 | Optional-Data               | Option\<T>                                     |
 
-[^1]: need ` #[serde(with = "serde_xdr::opaque::fixed")]`.
-[^2]: need ` #[serde(with = "serde_xdr::opaque::variable")]`.
+[^1]: need `#[serde(with = "serde_xdr::opaque::fixed")]`.
+[^2]: need `#[serde(with = "serde_xdr::opaque::variable")]`.
 
 ### Enumeration and Discriminated Union
 
 XDR enumeration and union is mapped to bellow pattern rust code.
 
-```
+```xdr
 enum { RED = 2, YELLOW = 3, BLUE = 5 } colors;
 ```
 

@@ -70,7 +70,7 @@ where
     let size = seq.size_hint().unwrap();
 
     let mut bytes = vec![0u8; size];
-    let padded_len = (size + 3) / 4;
+    let padded_len = size.div_ceil(4);
 
     let mut idx = 0;
     for _ in 0..padded_len {

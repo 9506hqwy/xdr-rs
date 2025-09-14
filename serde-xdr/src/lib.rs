@@ -281,8 +281,7 @@ mod de_tests {
     #[test]
     fn from_bytes_unit() {
         let v = [];
-        let ret: () = from_bytes(&v).unwrap();
-        assert_eq!((), ret);
+        let _: () = from_bytes(&v).unwrap();
     }
 
     #[test]
@@ -439,6 +438,7 @@ mod ser_tests {
     use std::collections::HashMap;
     use std::ffi::CString;
 
+    #[allow(dead_code)]
     #[derive(Serialize)]
     struct UnitStruct;
 
@@ -707,7 +707,9 @@ mod ser_tests {
         let v = vec![NewTypeStruct(0), NewTypeStruct(1)];
         let ret = to_bytes(&v).unwrap();
         assert_eq!(
-            vec![0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+            vec![
+                0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+            ],
             ret
         );
     }
@@ -735,7 +737,9 @@ mod ser_tests {
         let v = TupleVariant::A(0, 1);
         let ret = to_bytes(&v).unwrap();
         assert_eq!(
-            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+            vec![
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+            ],
             ret
         );
     }
@@ -746,7 +750,9 @@ mod ser_tests {
         v.insert(1, 2);
         let ret = to_bytes(&v).unwrap();
         assert_eq!(
-            vec![0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02],
+            vec![
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02
+            ],
             ret
         );
     }
@@ -763,7 +769,9 @@ mod ser_tests {
         let v = StructVariant::A { a: 1, b: 2 };
         let ret = to_bytes(&v).unwrap();
         assert_eq!(
-            vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02],
+            vec![
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02
+            ],
             ret
         );
     }

@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse, Fields, ItemEnum, Type};
+use syn::{Fields, ItemEnum, Type, parse};
 
 #[proc_macro_derive(XdrIndexer)]
 pub fn xdr_indexer(input: TokenStream) -> TokenStream {

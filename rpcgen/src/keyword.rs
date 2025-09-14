@@ -33,9 +33,9 @@ const KEYWORDS_XDR: &[&str] = &[
 ];
 
 pub fn rust_reserved(keyword: &str) -> bool {
-    KEYWORDS_RUST.iter().any(|&k| k == keyword)
+    KEYWORDS_RUST.contains(&keyword)
 }
 
 pub fn xdr_reserved(keyword: &str) -> bool {
-    KEYWORDS_XDR.iter().any(|&k| k == keyword)
+    KEYWORDS_XDR.contains(&keyword)
 }

@@ -1,4 +1,4 @@
 pub mod error;
-pub mod gen;
+pub mod gen_code;
 pub mod keyword;
 pub mod parser;

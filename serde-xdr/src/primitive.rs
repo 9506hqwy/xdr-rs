@@ -16,6 +16,6 @@ pub mod signed32 {
         D: Deserializer<'de>,
     {
         let v = i32::deserialize(deserializer)?;
-        T::try_from(v).map_err(|_| Error::custom(format!("Can not convert from {}", v)))
+        T::try_from(v).map_err(|_| Error::custom(format!("Can not convert from {v}")))
     }
 }
