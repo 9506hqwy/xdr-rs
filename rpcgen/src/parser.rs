@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::keyword;
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::{
@@ -10,7 +10,7 @@ use nom::{
     },
     combinator::{map, opt, peek, recognize, verify},
     multi::{many0, many1, separated_list1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, terminated},
 };
 use std::convert::TryFrom;
 use std::str::FromStr;
@@ -434,26 +434,25 @@ impl Procedure {
 
 fn assign(input: &str) -> IResult<&str, Assign> {
     map(
-        tuple((
-            identifier,
-            preceded(tuple((comment0, tag("="), comment0)), value),
-        )),
+        (identifier, preceded((comment0, tag("="), comment0), value)),
         |(i, v)| Assign::new(i, v),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn case_spec(input: &str) -> IResult<&str, CaseSpec> {
     map(
-        tuple((
+        (
             many1(delimited(
-                tuple((comment0, tag("case"), comment0)),
+                (comment0, tag("case"), comment0),
                 value,
-                tuple((comment0, tag(":"), comment0)),
+                (comment0, tag(":"), comment0),
             )),
-            terminated(declaration, tuple((comment0, tag(";")))),
-        )),
+            terminated(declaration, (comment0, tag(";"))),
+        ),
         |(v, d)| CaseSpec::new(v, d),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn comment0(input: &str) -> IResult<&str, Option<Vec<&str>>> {
@@ -463,11 +462,12 @@ fn comment0(input: &str) -> IResult<&str, Option<Vec<&str>>> {
             delimited(tag("/*"), take_until("*/"), tag("*/")),
             multispace0,
         ))),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn comment_line(input: &str) -> IResult<&str, &str> {
-    delimited(tag("%"), not_line_ending, line_ending)(input)
+    delimited(tag("%"), not_line_ending, line_ending).parse(input)
 }
 
 fn constant(input: &str) -> IResult<&str, Constant> {
@@ -476,21 +476,24 @@ fn constant(input: &str) -> IResult<&str, Constant> {
         hexadecimal,
         octal,
         map(tag("0"), |v: &str| Constant::Decimal(v.to_string())),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn constant_def(input: &str) -> IResult<&str, Assign> {
     preceded(
-        tuple((tag("const"), multispace1)),
-        terminated(assign, tuple((comment0, tag(";")))),
-    )(input)
+        (tag("const"), multispace1),
+        terminated(assign, (comment0, tag(";"))),
+    )
+    .parse(input)
 }
 
 fn decimal_nonzero(input: &str) -> IResult<&str, Constant> {
     map(
-        recognize(tuple((opt(tag("-")), one_of("1234567879"), many0(digit1)))),
+        recognize((opt(tag("-")), one_of("1234567879"), many0(digit1))),
         |v: &str| Constant::Decimal(v.to_string()),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn declaration(input: &str) -> IResult<&str, Declaration> {
@@ -498,54 +501,55 @@ fn declaration(input: &str) -> IResult<&str, Declaration> {
     alt((
         map(tag("void"), |_| Declaration::void()),
         map(
-            tuple((
-                preceded(tuple((tag("opaque"), multispace1)), identifier),
+            (
+                preceded((tag("opaque"), multispace1), identifier),
                 delimited(tag("["), value, tag("]")),
-            )),
+            ),
             |(i, v)| Declaration::opaque_fixed_array(i, v),
         ),
         map(
-            tuple((
-                preceded(tuple((tag("opaque"), multispace1)), identifier),
+            (
+                preceded((tag("opaque"), multispace1), identifier),
                 delimited(tag("<"), opt(value), tag(">")),
-            )),
+            ),
             |(i, v)| Declaration::opaque_variable_array(i, v),
         ),
         map(
-            tuple((
-                preceded(tuple((tag("string"), multispace1)), identifier),
+            (
+                preceded((tag("string"), multispace1), identifier),
                 delimited(tag("<"), opt(value), tag(">")),
-            )),
+            ),
             |(i, v)| Declaration::string(i, v),
         ),
         map(
-            tuple((
+            (
                 type_specifier,
                 preceded(multispace1, identifier),
                 delimited(tag("["), value, tag("]")),
-            )),
+            ),
             |(t, i, v)| Declaration::fixed_array(t, i, v),
         ),
         map(
-            tuple((
+            (
                 type_specifier,
                 preceded(multispace1, identifier),
                 delimited(tag("<"), opt(value), tag(">")),
-            )),
+            ),
             |(t, i, v)| Declaration::variable_array(t, i, v),
         ),
         map(
-            tuple((
+            (
                 type_specifier,
-                preceded(tuple((multispace0, tag("*"), multispace0)), identifier),
-            )),
+                preceded((multispace0, tag("*"), multispace0), identifier),
+            ),
             |(t, i)| Declaration::option_variable(t, i),
         ),
         map(
-            tuple((type_specifier, preceded(multispace1, identifier))),
+            (type_specifier, preceded(multispace1, identifier)),
             |(t, i)| Declaration::variable(t, i),
         ),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn definition(input: &str) -> IResult<&str, Definition> {
@@ -554,29 +558,33 @@ fn definition(input: &str) -> IResult<&str, Definition> {
         map(type_def, Definition::type_def),
         map(program, Definition::program),
         map(comment_line, |_| Definition::linecomment_def()),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn enum_body(input: &str) -> IResult<&str, Vec<Assign>> {
     delimited(
-        tuple((tag("{"), comment0)),
-        separated_list1(tuple((comment0, tag(","), comment0)), assign),
-        tuple((comment0, tag("}"))),
-    )(input)
+        (tag("{"), comment0),
+        separated_list1((comment0, tag(","), comment0), assign),
+        (comment0, tag("}")),
+    )
+    .parse(input)
 }
 
 fn enum_type_spec(input: &str) -> IResult<&str, EnumTypeSpec> {
     map(
-        preceded(tuple((tag("enum"), multispace1)), enum_body),
+        preceded((tag("enum"), multispace1), enum_body),
         EnumTypeSpec::new,
-    )(input)
+    )
+    .parse(input)
 }
 
 fn hexadecimal(input: &str) -> IResult<&str, Constant> {
     map(
         preceded(tag("0x"), recognize(many1(hex_digit1))),
         |v: &str| Constant::Hex(v.to_string()),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn identifier(input: &str) -> IResult<&str, &str> {
@@ -586,94 +594,96 @@ fn identifier(input: &str) -> IResult<&str, &str> {
             many0(alt((alphanumeric1, tag("_")))),
         )),
         |i| !keyword::xdr_reserved(i),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn octal(input: &str) -> IResult<&str, Constant> {
     map(
         preceded(tag("0"), recognize(many1(oct_digit1))),
         |v: &str| Constant::Octal(v.to_string()),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn specification(input: &str) -> IResult<&str, Vec<Definition>> {
-    many0(delimited(comment0, definition, comment0))(input)
+    many0(delimited(comment0, definition, comment0)).parse(input)
 }
 
 fn struct_body(input: &str) -> IResult<&str, Vec<Declaration>> {
     delimited(
-        tuple((tag("{"), comment0)),
-        many1(terminated(
-            declaration,
-            tuple((comment0, tag(";"), comment0)),
-        )),
-        tuple((comment0, tag("}"))),
-    )(input)
+        (tag("{"), comment0),
+        many1(terminated(declaration, (comment0, tag(";"), comment0))),
+        (comment0, tag("}")),
+    )
+    .parse(input)
 }
 
 fn struct_type_spec(input: &str) -> IResult<&str, StructTypeSpec> {
     map(
-        preceded(tuple((tag("struct"), multispace1)), struct_body),
+        preceded((tag("struct"), multispace1), struct_body),
         StructTypeSpec::new,
-    )(input)
+    )
+    .parse(input)
 }
 
 fn type_def(input: &str) -> IResult<&str, TypeDef> {
     alt((
         map(
             delimited(
-                tuple((tag("typedef"), multispace1)),
+                (tag("typedef"), multispace1),
                 declaration,
-                tuple((comment0, tag(";"))),
+                (comment0, tag(";")),
             ),
             TypeDef::declaration_def,
         ),
         map(
             delimited(
-                tuple((tag("enum"), multispace1)),
-                tuple((terminated(identifier, comment0), enum_body)),
-                tuple((comment0, tag(";"))),
+                (tag("enum"), multispace1),
+                (terminated(identifier, comment0), enum_body),
+                (comment0, tag(";")),
             ),
             |(i, v)| TypeDef::enum_def(i, v),
         ),
         map(
             delimited(
-                tuple((tag("struct"), multispace1)),
-                tuple((terminated(identifier, comment0), struct_body)),
-                tuple((comment0, tag(";"))),
+                (tag("struct"), multispace1),
+                (terminated(identifier, comment0), struct_body),
+                (comment0, tag(";")),
             ),
             |(i, v)| TypeDef::struct_def(i, v),
         ),
         map(
             delimited(
-                tuple((tag("union"), multispace1)),
-                tuple((terminated(identifier, comment0), union_body)),
-                tuple((comment0, tag(";"))),
+                (tag("union"), multispace1),
+                (terminated(identifier, comment0), union_body),
+                (comment0, tag(";")),
             ),
             |(i, v)| TypeDef::union_def(i, v),
         ),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn type_specifier(input: &str) -> IResult<&str, TypeSpecifier> {
     alt((
         map(
-            tuple((
+            (
                 tag("unsigned"),
                 multispace1,
                 terminated(tag("int"), peek(multispace1)),
-            )),
+            ),
             |_| TypeSpecifier::Int(false),
         ),
         map(terminated(tag("int"), peek(multispace1)), |_| {
             TypeSpecifier::Int(true)
         }),
         map(
-            tuple((
+            (
                 tag("unsigned"),
                 multispace1,
                 terminated(tag("hyper"), peek(multispace1)),
-            )),
+            ),
             |_| TypeSpecifier::Hyper(false),
         ),
         map(terminated(tag("hyper"), peek(multispace1)), |_| {
@@ -681,22 +691,22 @@ fn type_specifier(input: &str) -> IResult<&str, TypeSpecifier> {
         }),
         // start (libvirt extenstion)
         map(
-            tuple((
+            (
                 tag("unsigned"),
                 multispace1,
                 terminated(tag("char"), peek(multispace1)),
-            )),
+            ),
             |_| TypeSpecifier::Char(false),
         ),
         map(terminated(tag("char"), peek(multispace1)), |_| {
             TypeSpecifier::Char(true)
         }),
         map(
-            tuple((
+            (
                 tag("unsigned"),
                 multispace1,
                 terminated(tag("short"), peek(multispace1)),
-            )),
+            ),
             |_| TypeSpecifier::Short(false),
         ),
         map(terminated(tag("short"), peek(multispace1)), |_| {
@@ -722,104 +732,99 @@ fn type_specifier(input: &str) -> IResult<&str, TypeSpecifier> {
         map(struct_type_spec, TypeSpecifier::struct_type),
         map(union_type_spec, TypeSpecifier::union_type),
         map(identifier, TypeSpecifier::identifier_type),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn union_body(input: &str) -> IResult<&str, UnionBody> {
     map(
-        tuple((
+        (
             delimited(
-                tuple((tag("switch"), comment0, tag("("), comment0)),
+                (tag("switch"), comment0, tag("("), comment0),
                 declaration,
-                tuple((comment0, tag(")"), comment0, tag("{"), comment0)),
+                (comment0, tag(")"), comment0, tag("{"), comment0),
             ),
             many1(terminated(case_spec, comment0)),
             terminated(
                 opt(delimited(
-                    tuple((comment0, tag("default"), comment0, tag(":"), comment0)),
+                    (comment0, tag("default"), comment0, tag(":"), comment0),
                     declaration,
-                    tuple((comment0, tag(";"))),
+                    (comment0, tag(";")),
                 )),
-                tuple((comment0, tag("}"))),
+                (comment0, tag("}")),
             ),
-        )),
+        ),
         |(c, s, d)| UnionBody::new(c, s, d),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn union_type_spec(input: &str) -> IResult<&str, UnionTypeSpec> {
     map(
-        preceded(tuple((tag("union"), multispace1)), union_body),
+        preceded((tag("union"), multispace1), union_body),
         UnionTypeSpec::new,
-    )(input)
+    )
+    .parse(input)
 }
 
 fn value(input: &str) -> IResult<&str, Value> {
     alt((
         map(constant, Value::constant),
         map(identifier, Value::identifier),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn program(input: &str) -> IResult<&str, Program> {
     map(
-        tuple((
-            preceded(tuple((tag("program"), multispace1)), identifier),
+        (
+            preceded((tag("program"), multispace1), identifier),
             delimited(
-                tuple((multispace0, tag("{"), multispace0)),
+                (multispace0, tag("{"), multispace0),
                 many1(version),
-                tuple((multispace0, tag("}"), multispace0)),
+                (multispace0, tag("}"), multispace0),
             ),
-            delimited(
-                tuple((tag("="), multispace0)),
-                value,
-                tuple((multispace0, tag(";"))),
-            ),
-        )),
+            delimited((tag("="), multispace0), value, (multispace0, tag(";"))),
+        ),
         |(a, b, c)| Program::new(a, b, c),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn version(input: &str) -> IResult<&str, Version> {
     map(
-        tuple((
-            preceded(tuple((tag("version"), multispace1)), identifier),
+        (
+            preceded((tag("version"), multispace1), identifier),
             delimited(
-                tuple((multispace0, tag("{"), multispace0)),
+                (multispace0, tag("{"), multispace0),
                 many1(terminated(procedure, multispace0)),
-                tuple((multispace0, tag("}"), multispace0)),
+                (multispace0, tag("}"), multispace0),
             ),
-            delimited(
-                tuple((tag("="), multispace0)),
-                value,
-                tuple((multispace0, tag(";"))),
-            ),
-        )),
+            delimited((tag("="), multispace0), value, (multispace0, tag(";"))),
+        ),
         |(a, b, c)| Version::new(a, b, c),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn procedure(input: &str) -> IResult<&str, Procedure> {
     map(
-        tuple((
+        (
             terminated(
                 alt((type_specifier, map(tag("void"), |_| TypeSpecifier::Void))),
                 multispace1,
             ),
             identifier,
             delimited(
-                tuple((multispace0, tag("("), multispace0)),
+                (multispace0, tag("("), multispace0),
                 alt((type_specifier, map(tag("void"), |_| TypeSpecifier::Void))),
-                tuple((multispace0, tag(")"), multispace0)),
+                (multispace0, tag(")"), multispace0),
             ),
-            delimited(
-                tuple((tag("="), multispace0)),
-                value,
-                tuple((multispace0, tag(";"))),
-            ),
-        )),
+            delimited((tag("="), multispace0), value, (multispace0, tag(";"))),
+        ),
         |(a, b, c, d)| Procedure::new(a, b, c, d),
-    )(input)
+    )
+    .parse(input)
 }
 
 #[cfg(test)]
